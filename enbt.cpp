@@ -138,9 +138,6 @@ Target simpleIntConvert(const ENBT::EnbtValue& val) {
 	else if (std::holds_alternative<double>(val))
 		return (Target)std::get<double>(val);
 
-	else if (std::holds_alternative<ENBT*>(val))
-		return (Target)std::get<ENBT*>(val);
-
 	else
 		throw EnbtException("Invalid type for convert");
 }
@@ -156,3 +153,4 @@ ENBT::operator uint32_t() const { return simpleIntConvert<uint32_t>(content()); 
 ENBT::operator uint64_t() const { return simpleIntConvert<uint64_t>(content()); }
 ENBT::operator float() const { return simpleIntConvert<float>(content()); }
 ENBT::operator double() const { return simpleIntConvert<double>(content()); }
+
