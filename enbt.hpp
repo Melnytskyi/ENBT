@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #ifndef _ENBT_NO_REDEFINE_
 #define _ENBT_NO_REDEFINE_
 #include <unordered_map>
@@ -367,16 +367,11 @@ public:
 		virtual std::string toDENBT() = 0;
 	};
 
-
-protected:
-
-
-
 	template<class T>
 	static T fromVar(uint8_t* ch) {
 		constexpr int max_offset = (sizeof(T) / 5 * 5 + ((sizeof(T) % 5) > 0)) * 8;
-		int decodedInt = 0;
-		int bitOffset = 0;
+		T decodedInt = 0;
+		T bitOffset = 0;
 		char currentByte = 0;
 		int i = 0;
 		do {
@@ -387,15 +382,8 @@ protected:
 		} while ((currentByte & 0b10000000) != 0);
 		return decodedInt;
 	}
-	template<class T>
-	static T getVar(uint8_t* real_data,int data_len, std::endian endian) {
-		uint8_t* cop = new uint8_t[data_len];
-		for (int i = 0; i < data_len; i++)cop[i] = real_data[i];
-		ConvertEndian(endian, cop, data_len);
-		T res = fromVar<T>(cop);
-		delete[] cop;
-		return res;
-	}
+
+protected:
 	static EnbtValue GetContent(uint8_t* data,size_t data_len, Type_ID data_type_id) {
 		uint8_t* real_data = getData(data, data_type_id,data_len);
 		switch (data_type_id.type)
@@ -471,6 +459,45 @@ protected:
 	static uint8_t* CloneData(uint8_t* data, Type_ID data_type_id, size_t data_len) {
 		switch (data_type_id.type)
 		{
+		case ENBT::Type_ID::Type::sarray:
+		{
+			switch (data_type_id.length)
+			{
+			case TypeLen::Tiny:
+			{
+				uint8_t* res = new uint8_t[data_len];
+				for (size_t i = 0; i < data_len; i++)
+					res[i] = data[i];
+				return res;
+			}
+			case TypeLen::Short:
+			{
+				uint16_t* res = new uint16_t[data_len];
+				uint16_t* proxy = (uint16_t*)data;
+				for (size_t i = 0; i < data_len; i++)
+					res[i] = proxy[i];
+				return (uint8_t*)res;
+			}
+			case TypeLen::Default:
+			{
+				uint32_t* res = new uint32_t[data_len];
+				uint32_t* proxy = (uint32_t*)data;
+				for (size_t i = 0; i < data_len; i++)
+					res[i] = proxy[i];
+				return (uint8_t*)res;
+			}
+			case TypeLen::Long:
+			{
+				uint64_t* res = new uint64_t[data_len];
+				uint64_t* proxy = (uint64_t*)data;
+				for (size_t i = 0; i < data_len; i++)
+					res[i] = proxy[i];
+				return (uint8_t*)res;
+			}
+			default:
+				break;
+			}
+		}
 		case ENBT::Type_ID::Type::array:
 		case ENBT::Type_ID::Type::darray:
 			return (uint8_t*)new std::vector<ENBT>(*(std::vector<ENBT>*)data);
@@ -1343,10 +1370,12 @@ public:
 			auto to_copy = alias_strings[i].c_str();
 			auto to_paste = astrs[i] = new char[str_len];
 			for (size_t j = 0; j < str_len; j++)
-				to_paste[j] = to_paste[j];
+				to_paste[j] = to_copy[j];
 		}
+		if (global_strings)
+			delete[] global_strings;
 		total_strings = ts;
-		global_strings = astrs;
+		global_strings = (const char**)astrs;
 	}
 	static uint16_t ToAliasedStr(const char* str) {
 		for (uint16_t i = 0; i < total_strings; i++)
@@ -2064,6 +2093,7 @@ public:
 				default:
 					break;
 				}
+				break;
 			case ENBT::Type::array:
 			case ENBT::Type::darray:
 				(*(std::vector<ENBT>::iterator*)pointer)++;
@@ -2103,6 +2133,7 @@ public:
 				default:
 					break;
 				}
+				break;
 			case ENBT::Type::array:
 			case ENBT::Type::darray:
 				(*(std::vector<ENBT>::iterator*)pointer)--;
@@ -2840,19 +2871,41 @@ public:
 	static ENBT ReadSArray(std::istream& read_stream, ENBT::Type_ID tid) {
 		uint64_t len = ReadCompressLen(read_stream);
 		auto endian = tid.getEndian();
+		ENBT res;
 		switch (tid.length)
 		{
-		case ENBT::Type_ID::LenType::Tiny:
-			return { ReadArray<uint8_t>(read_stream, len, endian),len };
+		case ENBT::Type_ID::LenType::Tiny: 
+		{
+			uint8_t* arr = ReadArray<uint8_t>(read_stream, len, endian);
+			res = { arr,len };
+			delete[] arr;
+			break;
+		}
 		case ENBT::Type_ID::LenType::Short:
-			return { ReadArray<uint16_t>(read_stream, len, endian),len,endian,false };
-		case ENBT::Type_ID::LenType::Default:
-			return { ReadArray<uint32_t>(read_stream, len, endian),len,endian,false };
-		case ENBT::Type_ID::LenType::Long:
-			return { ReadArray<uint64_t>(read_stream, len, endian),len,endian,false };
+		{
+			uint16_t* arr = ReadArray<uint16_t>(read_stream, len, endian);
+			res = { arr,len };
+			delete[] arr;
+			break;
+		}
+		case ENBT::Type_ID::LenType::Default: 
+		{
+			uint32_t* arr = ReadArray<uint32_t>(read_stream, len, endian);
+			res = { arr,len };
+			delete[] arr;
+			break;
+		}
+		case ENBT::Type_ID::LenType::Long: 
+		{
+			uint64_t* arr = ReadArray<uint64_t>(read_stream, len, endian);
+			res = { arr,len };
+			delete[] arr;
+			break;
+		}
 		default:
 			throw EnbtException();
 		}
+		return res;
 	}
 	static ENBT ReadValue(std::istream& read_stream, ENBT::Type_ID tid) {
 		switch (tid.type)
@@ -2925,16 +2978,16 @@ public:
 	static void LoadAStrings(std::istream& read_stream) {
 		uint16_t len = ReadDefineLen<uint16_t>(read_stream);
 		std::vector<std::string> res;
-		std::stringstream ss;
+		std::string ss;
 		for (uint16_t i = 0; i < len; i++) {
 			while (true) {
 				char ch;
 				read_stream >> ch;
 				if (ch == 0)
 					break;
-				ss << ch;
+				ss += ch;
 			}
-			res.push_back(ss.str());
+			res.push_back(ss);
 			ss.clear();
 		}
 		ENBT::SetAStrings(res);
