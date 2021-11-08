@@ -498,6 +498,7 @@ protected:
 				break;
 			}
 		}
+		break;
 		case ENBT::Type_ID::Type::array:
 		case ENBT::Type_ID::Type::darray:
 			return (uint8_t*)new std::vector<ENBT>(*(std::vector<ENBT>*)data);
@@ -2324,11 +2325,14 @@ inline std::istream& operator>>(std::istream& is, ENBT::Type_ID& tid) {
 			is >> part; tmp.push_back(part);
 			is >> part; tmp.push_back(part);
 			is >> part; tmp.push_back(part);
+			[[fallthrough]];
 		case ENBT::Type_ID::LenType::Default:
 			is >> part; tmp.push_back(part);
 			is >> part; tmp.push_back(part);
+			[[fallthrough]];
 		case ENBT::Type_ID::LenType::Short:
 			is >> part; tmp.push_back(part);
+			[[fallthrough]];
 		case ENBT::Type_ID::LenType::Tiny:
 			is >> part; tmp.push_back(part);
 		}
@@ -3096,12 +3100,6 @@ public:
 		switch (tid.type)
 		{
 		case ENBT::Type_ID::Type::floating:
-			switch (tid.length)
-			{
-			case  ENBT::Type_ID::LenType::Tiny:
-			case  ENBT::Type_ID::LenType::Short:
-				return;
-			}
 		case ENBT::Type_ID::Type::integer:
 			switch (tid.length)
 			{
@@ -3120,18 +3118,18 @@ public:
 			{
 			case  ENBT::Type_ID::LenType::Default:
 				if (tid.is_signed)
-					ReadVar<int32_t>(read_stream, tid.getEndian());
+					ReadVar<int32_t>(read_stream, std::endian::native);
 				else
-					ReadVar<uint32_t>(read_stream, tid.getEndian());
+					ReadVar<uint32_t>(read_stream, std::endian::native);
 				break;
 			case  ENBT::Type_ID::LenType::Long:
 				if (tid.is_signed)
-					ReadVar<int64_t>(read_stream, tid.getEndian());
+					ReadVar<int64_t>(read_stream, std::endian::native);
 				else
-					ReadVar<uint64_t>(read_stream, tid.getEndian());
+					ReadVar<uint64_t>(read_stream, std::endian::native);
 			}
 			break;
-		case  ENBT::Type_ID::Type::uuid:	ReadValue<ENBT::UUID>(read_stream, tid.getEndian()); break;
+		case  ENBT::Type_ID::Type::uuid:	read_stream.seekg(read_stream.tellg() += 16); break;
 		case ENBT::Type_ID::Type::sarray:   SkipSArray(read_stream, tid); break;
 		case ENBT::Type_ID::Type::darray:	SkipDArray(read_stream, tid);  break;
 		case ENBT::Type_ID::Type::compound:	SkipCompoud(read_stream, tid); break;
@@ -3139,8 +3137,6 @@ public:
 		case ENBT::Type_ID::Type::optional:	
 			if (tid.is_signed) 
 				SkipToken(read_stream);
-			else
-				read_stream.seekg(read_stream.tellg() += 1);
 			break;
 		}
 	}
