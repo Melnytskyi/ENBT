@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef _ENBT_NO_REDEFINE_
 #define _ENBT_NO_REDEFINE_
 #include <unordered_map>
@@ -520,6 +520,8 @@ protected:
 				return (uint8_t*)new ENBT((ENBT*)data);
 			else
 				return nullptr;
+		case ENBT::Type_ID::Type::uuid:
+			return (uint8_t*)new UUID(*(UUID*)data);
 		default:
 			if (data_len > 8) {
 				uint8_t* data_cloned = new uint8_t[data_len];
@@ -574,6 +576,9 @@ protected:
 		case ENBT::Type_ID::Type::optional:
 			delete (ENBT*)data;
 			break;
+		case ENBT::Type_ID::Type::uuid:
+			delete (UUID*)data;
+			break;
 		default:
 			delete[] data;
 		}
@@ -594,7 +599,7 @@ protected:
 	template<class T>
 	void SetData(T val) {
 		data_len = sizeof(data_len);
-		if (data_len <= 8) {
+		if (data_len <= 8 && data_type_id.type != Type::uuid) {
 			data = nullptr;
 			char* prox0 = (char*)&data;
 			char* prox1 = (char*)&val;
@@ -1474,7 +1479,7 @@ public:
 		if (data_type_id.type == Type_ID::Type::optional)
 			if (data_type_id.is_signed)
 				return true;
-		return false;
+		return data_type_id.type != Type_ID::Type::none;
 	}
 	bool contains(const char* index) const {
 		if (is_compoud()) {
@@ -2692,14 +2697,17 @@ public:
 	}
 	template<class T> static T ReadValue(std::istream& read_stream, std::endian endian = std::endian::native) {
 		T tmp;
-		uint8_t* proxy = (uint8_t*)&tmp;
-		for (size_t i = 0; i < sizeof(T); i++) {
-			read_stream >> proxy[i];
+		if constexpr (std::is_same<T, ENBT::UUID>()) {
+			for (size_t i = 0; i < 16; i++)
+				read_stream >> tmp.data[i];
+			ENBT::ConvertEndian(endian, tmp.data, 16);
 		}
-		if constexpr (std::is_same<T, ENBT::UUID>()) 
-			ENBT::ConvertEndian(endian, tmp.data,16);
-		else 
+		else {
+			uint8_t* proxy = (uint8_t*)&tmp;
+			for (size_t i = 0; i < sizeof(T); i++)
+				read_stream >> proxy[i];
 			ENBT::ConvertEndian(endian, tmp);
+		}
 		return tmp;
 	}
 	template<class T> static T* ReadArray(std::istream& read_stream,size_t len, std::endian endian = std::endian::native) {
@@ -2844,8 +2852,7 @@ public:
 	static std::vector<ENBT> ReadArray(std::istream& read_stream, ENBT::Type_ID tid) {
 		size_t len = ReadDefineLen(read_stream, tid);
 		ENBT::Type_ID atid = ReadTypeID(read_stream);
-		std::vector<ENBT> result;
-		result.resize(len);
+		std::vector<ENBT> result(len);
 		if (atid == ENBT::Type_ID::Type::bit) {
 			int8_t i = 0;
 			uint8_t value = 0;
@@ -2866,8 +2873,7 @@ public:
 	}
 	static std::vector<ENBT> ReadDArray(std::istream& read_stream, ENBT::Type_ID tid) {
 		size_t len = ReadDefineLen(read_stream, tid);
-		std::vector<ENBT> result;
-		result.resize(len);
+		std::vector<ENBT> result(len);
 		for(size_t i = 0; i < len; i++)
 			result[i] = ReadToken(read_stream);
 		return result;
@@ -2972,6 +2978,7 @@ public:
 		case ENBT::Type_ID::Type::compound:	return ReadCompoud(read_stream,tid);
 		case ENBT::Type_ID::Type::array:	return ENBT(ReadArray(read_stream,tid), tid);
 		case ENBT::Type_ID::Type::optional: return tid.is_signed ? ENBT(true, ReadToken(read_stream)) : ENBT(false, ENBT());
+		case ENBT::Type_ID::Type::bit:		return ENBT((bool)tid.is_signed);
 		default:							return ENBT();
 		}
 	}
