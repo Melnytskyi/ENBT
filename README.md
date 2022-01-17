@@ -4,3 +4,5 @@ for example you can store noting in one byte, bit value in one byte or big endia
 
 For version 1.0 this format can store 11 types
 
+# Note
+For compile you need boost/uuid libray
