@@ -1,6 +1,6 @@
-﻿#include <iostream>
+﻿#include "enbt.hpp"
 #include <fstream>
-#include <ms_core/enbt.hpp>
+#include <iostream>
 int main()
 {
     ENBT core = ENBT::Type_ID(ENBT::Type::compound, ENBT::Type_ID::LenType::Tiny,false);
@@ -41,7 +41,7 @@ int main()
     
     std::fstream fs;
     fs.open("test.enbt", std::fstream::out | std::fstream::binary);
-    ENBTHelper::InitalizeVersion(fs);
+    ENBTHelper::InitializeVersion(fs);
     ENBTHelper::WriteToken(fs, core);
     fs.close();
 

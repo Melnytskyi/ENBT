@@ -1,15 +1,18 @@
 #pragma once
 #ifndef _ENBT_NO_REDEFINE_
 #define _ENBT_NO_REDEFINE_
-#include <unordered_map>
-#include <string>
-#include <istream>
-#include <bit>
-#include <any>
-#include <variant>
-#include <boost/uuid/detail/md5.hpp>
-#define ENBT_VERSION_HEX 0x10
-#define ENBT_VERSION_STR 1.0
+    #include <any>
+    #include <bit>
+    #include <boost/uuid/detail/md5.hpp>
+    #include <exception>
+    #include <initializer_list>
+    #include <istream>
+    #include <sstream>
+    #include <string>
+    #include <unordered_map>
+    #include <variant>
+    #define ENBT_VERSION_HEX 0x10
+    #define ENBT_VERSION_STR 1.0
 //enchanted named binary tag
 class EnbtException : public std::exception {
 public:
@@ -348,9 +351,9 @@ public:
 		virtual size_t Size(uint8_t*& value, Type_ID tid, size_t data_len) = 0;
 		virtual ENBT& Index(uint8_t*& value, Type_ID tid, size_t data_len,size_t index) = 0;
 		virtual ENBT Index(const uint8_t*& value, Type_ID tid, size_t data_len, size_t index) = 0;
-		virtual ENBT& Fing(uint8_t*& value, Type_ID tid, size_t data_len, const std::string& str) = 0;
-		virtual ENBT Fing(const uint8_t*& value, Type_ID tid, size_t data_len, const std::string& str) = 0; 
-		virtual bool Exists(const uint8_t*& value, Type_ID tid, size_t data_len, const std::string& str) = 0;
+        virtual ENBT& Find(uint8_t*& value, Type_ID tid, size_t data_len, const std::string& str) = 0;
+        virtual ENBT Find(const uint8_t*& value, Type_ID tid, size_t data_len, const std::string& str) = 0;
+        virtual bool Exists(const uint8_t*& value, Type_ID tid, size_t data_len, const std::string& str) = 0;
 		virtual void Remove(uint8_t*& value, Type_ID tid, size_t data_len, size_t index) = 0;
 		virtual void Remove(uint8_t*& value, Type_ID tid, size_t data_len, const std::string& index) = 0;
 		virtual size_t Push(uint8_t*& value, Type_ID tid, size_t data_len, ENBT& val) = 0;
@@ -368,21 +371,40 @@ public:
 		virtual std::string toDENBT() = 0;
 	};
 
-	template<class T>
-	static T fromVar(uint8_t* ch) {
-		constexpr int max_offset = (sizeof(T) / 5 * 5 + ((sizeof(T) % 5) > 0)) * 8;
-		T decodedInt = 0;
-		T bitOffset = 0;
-		char currentByte = 0;
-		int i = 0;
-		do {
-			if (bitOffset == max_offset) throw EnbtException("VarInt is too big");
-			currentByte = ch[i++];
-			decodedInt |= (currentByte & 0b01111111) << bitOffset;
-			bitOffset += 7;
-		} while ((currentByte & 0b10000000) != 0);
-		return decodedInt;
-	}
+    template <class T>
+    static T fromVar(uint8_t* ch, size_t& len) {
+        constexpr int max_offset = (sizeof(T) / 5 * 5 + ((sizeof(T) % 5) > 0)) * 8;
+        T decodedInt = 0;
+        T bitOffset = 0;
+        char currentByte = 0;
+        size_t i = 0;
+        do {
+            if (i >= len)
+                throw EnbtException("VarInt is too big");
+            if (bitOffset == max_offset)
+                throw EnbtException("VarInt is too big");
+            currentByte = ch[i++];
+            decodedInt |= (currentByte & 0b01111111) << bitOffset;
+            bitOffset += 7;
+        } while ((currentByte & 0b10000000) != 0);
+        len = i;
+        return decodedInt;
+    }
+
+    template <class T>
+    static size_t toVar(uint8_t* buf, size_t buf_len, T val) {
+        size_t i = 0;
+        do {
+            if (i >= buf_len)
+                throw EnbtException("VarInt is too big");
+            buf[i] = (uint8_t)(val & 0b01111111);
+            val >>= 7;
+            if (val != 0)
+                buf[i] |= 0b10000000;
+            i++;
+        } while (val != 0);
+        return i;
+    }
 
 protected:
 	static EnbtValue GetContent(uint8_t* data,size_t data_len, Type_ID data_type_id) {
@@ -644,55 +666,78 @@ protected:
 	}
 
 	void checkLen(Type_ID tid,size_t len) {
-		switch (tid.length)
-		{
-		case TypeLen::Tiny:
-			if (tid.is_signed) {
-				if (len > INT8_MAX)
+        switch (tid.length) {
+        case TypeLen::Tiny:
+            if (tid.is_signed) {
+                if (len > INT8_MAX)
+                    throw EnbtException("Invalid tid");
+            } else {
+                if (len > UINT8_MAX)
+                    throw EnbtException("Invalid tid");
+            }
+            break;
+        case TypeLen::Short:
+            if (tid.is_signed) {
+                if (len > INT16_MAX)
+                    throw EnbtException("Invalid tid");
+            } else {
+                if (len > UINT16_MAX)
+                    throw EnbtException("Invalid tid");
+            }
+            break;
+        case TypeLen::Default:
+            if (tid.is_signed) {
+                if (len > INT32_MAX)
+                    throw EnbtException("Invalid tid");
+            } else {
+                if (len > UINT32_MAX)
+                    throw EnbtException("Invalid tid");
+            }
+            break;
+        case TypeLen::Long:
+            if (tid.is_signed) {
+                if (len > INT64_MAX)
+                    throw EnbtException("Invalid tid");
+            } else {
+                if (len > UINT64_MAX)
 					throw EnbtException("Invalid tid");
-			}
-			else {
-				if (len > UINT8_MAX)
-					throw EnbtException("Invalid tid");
-			}
-			break;
-		case TypeLen::Short:
-			if (tid.is_signed) {
-				if (len > INT16_MAX)
-					throw EnbtException("Invalid tid");
-			}
-			else {
-				if (len > UINT16_MAX)
-					throw EnbtException("Invalid tid");
-			}
-			break;
-		case TypeLen::Default:
-			if (tid.is_signed) {
-				if (len > INT32_MAX)
-					throw EnbtException("Invalid tid");
-			}
-			else {
-				if (len > UINT32_MAX)
-					throw EnbtException("Invalid tid");
-			}
-			break;
-		case TypeLen::Long:
-			if (tid.is_signed) {
-				if (len > INT64_MAX)
-					throw EnbtException("Invalid tid");
-			}
-			else {
-				if (len > UINT64_MAX)
-					throw EnbtException("Invalid tid");
-			}
-			break;
-		}
-	}
+            }
+            break;
+        }
+    }
+
+    TypeLen calcLen(size_t len) {
+        if (len > UINT32_MAX)
+            return TypeLen::Long;
+        else if (len > UINT16_MAX)
+            return TypeLen::Default;
+        else if (len > UINT8_MAX)
+            return TypeLen::Short;
+        else
+            return TypeLen::Tiny;
+    }
+
 public:
-	ENBT() { data = nullptr; data_len = 0; data_type_id = Type_ID{ Type::none,TypeLen::Tiny }; }
-	template<class T>
-	ENBT(const std::vector<T>& array) {
-		data_len = array.size();
+    ENBT() {
+        data = nullptr;
+        data_len = 0;
+        data_type_id = Type_ID{Type::none, TypeLen::Tiny};
+    }
+
+    ENBT(const std::initializer_list<ENBT>& arr)
+        : ENBT() {
+        size_t len = arr.size();
+        ENBT* struct_arr = new ENBT[len];
+        size_t i = 0;
+        for (const ENBT& it : arr)
+            struct_arr[i++] = it;
+
+        *this = ENBT(struct_arr, ENBT::Type_ID(ENBT::Type_ID::Type::structure, calcLen(len)), len);
+    }
+
+    template <class T>
+    ENBT(const std::vector<T>& array) {
+        data_len = array.size();
 		data_type_id.type = Type::array;
 		data_type_id.is_signed = 0;
 		data_type_id.endian = Endian::native;
@@ -709,64 +754,67 @@ public:
 		for (const auto& it : array)
 			res->push_back(it);
 		data = (uint8_t*)res;
-	}
-	template<class T = ENBT>
-	ENBT(const std::vector<ENBT>& array) {
-		bool as_array = true;
-		Type_ID tid_check = array[0].type_id();
-		for (auto& check : array)
-			if (!check.type_equal(tid_check)) {
-				as_array = false;
-				break;
-			}
-		data_len = array.size();
-		if (as_array) 
-			data_type_id.type = Type::array;
-		else
-			data_type_id.type = Type::darray;
-		if (data_len <= UINT8_MAX)
-			data_type_id.length = TypeLen::Tiny;
-		else if (data_len <= UINT16_MAX)
-			data_type_id.length = TypeLen::Short;
-		else if (data_len <= UINT32_MAX)
-			data_type_id.length = TypeLen::Default;
-		else
-			data_type_id.length = TypeLen::Long;
-		data_type_id.is_signed = 0;
-		data_type_id.endian = Endian::native;
-		data = (uint8_t*)new std::vector<ENBT>(array);
-	}
-	ENBT(const std::vector<ENBT>& array, Type_ID tid) {
-		if (tid.type == Type::darray);
-		else if (tid.type == Type::array) {
+    }
+
+    template <class T = ENBT>
+    ENBT(const std::vector<ENBT>& array) {
+        bool as_array = true;
+        Type_ID tid_check = array[0].type_id();
+        for (auto& check : array)
+            if (!check.type_equal(tid_check)) {
+                as_array = false;
+                break;
+            }
+        data_len = array.size();
+        if (as_array)
+            data_type_id.type = Type::array;
+        else
+            data_type_id.type = Type::darray;
+        if (data_len <= UINT8_MAX)
+            data_type_id.length = TypeLen::Tiny;
+        else if (data_len <= UINT16_MAX)
+            data_type_id.length = TypeLen::Short;
+        else if (data_len <= UINT32_MAX)
+            data_type_id.length = TypeLen::Default;
+        else
+            data_type_id.length = TypeLen::Long;
+        data_type_id.is_signed = 0;
+        data_type_id.endian = Endian::native;
+        data = (uint8_t*)new std::vector<ENBT>(array);
+    }
+
+    ENBT(const std::vector<ENBT>& array, Type_ID tid) {
+        if (tid.type == Type::darray)
+            ;
+        else if (tid.type == Type::array) {
 			if (array.size()) {
 				Type_ID tid_check = array[0].type_id();
 				for (auto& check : array)
 					if (!check.type_equal(tid_check))
 						throw EnbtException("Invalid tid");
 			}
-		}
-		else 
-			throw EnbtException("Invalid tid");
+        } else
+            throw EnbtException("Invalid tid");
 		checkLen(tid, array.size());
 		data_type_id = tid;
 		data = (uint8_t*)new std::vector<ENBT>(array);
 	}
-	ENBT(const std::unordered_map<uint16_t, ENBT>& compound, TypeLen len_type = TypeLen::Short) {
-		data_type_id = Type_ID{ Type::compound,len_type,true };
-		switch (len_type)
-		{
-		case TypeLen::Tiny:
+
+    ENBT(const std::unordered_map<uint16_t, ENBT>& compound, TypeLen len_type = TypeLen::Short) {
+        data_type_id = Type_ID{Type::compound, len_type, true};
+        switch (len_type) {
+        case TypeLen::Tiny:
 		case TypeLen::Short:
 			checkLen(data_type_id, compound.size()); break;
 		default:
 			throw EnbtException("Invalid tid");
-		}
-		data = (uint8_t*)new std::unordered_map<uint16_t, ENBT>(compound);
+        }
+        data = (uint8_t*)new std::unordered_map<uint16_t, ENBT>(compound);
 	}
-	ENBT(const std::unordered_map<std::string, ENBT>& compound, TypeLen len_type = TypeLen::Long) {
-		data_type_id = Type_ID{ Type::compound,len_type,false };
-		checkLen(data_type_id, compound.size()); 
+
+    ENBT(const std::unordered_map<std::string, ENBT>& compound, TypeLen len_type = TypeLen::Long) {
+        data_type_id = Type_ID{Type::compound, len_type, false};
+        checkLen(data_type_id, compound.size()); 
 		data = (uint8_t*)new std::unordered_map<std::string, ENBT>(compound);
 	}
 
@@ -785,9 +833,11 @@ public:
 			data_type_id.length = TypeLen::Long;
 		data = (uint8_t*)new std::vector<ENBT>(std::move(array));
 	}
-	ENBT(std::vector<ENBT>&& array, Type_ID tid) {
-		if (tid.type == Type::darray);
-		else if (tid.type == Type::array) {
+
+    ENBT(std::vector<ENBT>&& array, Type_ID tid) {
+        if (tid.type == Type::darray)
+            ;
+        else if (tid.type == Type::array) {
 			if (array.size()) {
 				Type_ID tid_check = array[0].type_id();
 				for (auto& check : array)
@@ -801,7 +851,8 @@ public:
 		data_type_id = tid;
 		data = (uint8_t*)new std::vector<ENBT>(std::move(array));
 	}
-	ENBT(std::unordered_map<uint16_t, ENBT>&& compound, TypeLen len_type = TypeLen::Short) {
+
+    ENBT(std::unordered_map<uint16_t, ENBT>&& compound, TypeLen len_type = TypeLen::Short) {
 		data_type_id = Type_ID{ Type::compound,len_type,true };
 		switch (len_type)
 		{
@@ -2554,11 +2605,11 @@ public:
 		}
 	}
 
-	static void InitalizeVersion(std::ostream& write_stream) {
-		write_stream << (char)ENBT_VERSION_HEX;
-	}
+    static void InitializeVersion(std::ostream& write_stream) {
+        write_stream << (char)ENBT_VERSION_HEX;
+    }
 
-	static void SaveAStrings(std::ostream& write_stream) {
+    static void SaveAStrings(std::ostream& write_stream) {
 		auto&& temp = ENBT::GetAStrings();
 		uint16_t len = (uint16_t)temp.size();
 		if (len != temp.size())
@@ -2589,10 +2640,10 @@ public:
 				WriteArray(write_stream, it.first.c_str(), it.first.size());
 				WriteToken(write_stream, it.second);
 			}
-		}
-		
-	}
-	static void WriteArray(std::ostream& write_stream, const ENBT& val) {
+        }
+    }
+
+    static void WriteArray(std::ostream& write_stream, const ENBT& val) {
 		if (!val.is_array())
 			throw EnbtException("This is not array for serialize it");
 		auto result = (std::vector<ENBT>*)val.getPtr();
@@ -3383,16 +3434,16 @@ public:
 
 
 //ASN Example file
-// 
+//
 // [0x10] version
-// [5] count asociated utf8 strings
+// [5] count associated utf8 strings
 //	[3]string bytes(without zero char)		 //
 //		["123"] string	 // 0
 //	[4]["test"]			 // 1
 //	[5]["hello"]		 // 2
 //	[5]["world"]		 // 3
-//	[12]["Привет"]		 // 4 
-// 
+//	[12]["Привет"]		 // 4
+//
 // ENBT Example file
 ///////                       type (1 byte)                         compound len
 //	[ENBT::Type_ID{ type=compound,length = tiny,is_signed=true}][5 (1byte unsigned)]
@@ -3403,4 +3454,4 @@ public:
 //			[{ type=sarray,length = tiny,is_signed=false}][307]["\"Pijamalı hasta yağız şoföre çabucak güvendi\"\"Victor jagt zwölf Boxkämpfer quer über den großen Sylter Deich\"\"съешь ещё этих мягких французских булок, да выпей чаю.\"\"Pranzo d'acqua fa volti sghembi\"\"Stróż pchnął kość w quiz gędźb vel fax myjń\"\"]
 // 			[{ type=integer,length = long,is_signed=true}][9223372036854775807]
 //			[{ type=uuid}][0xD55F0C3556DA165E6F512203C78B57FF]
-//		
+//
