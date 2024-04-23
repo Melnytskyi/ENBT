@@ -7,21 +7,21 @@ ENBT& ENBT::operator[](size_t index){
 		return ((std::vector<ENBT>*)data)->operator[](index);
 	if (data_type_id.type == Type_ID::Type::structure)
 		return ((ENBT*)data)[index];
-	throw std::invalid_argument("Invalid tid, cannont index array");
+    throw std::invalid_argument("Invalid tid, cannot index array");
 }
 ENBT& ENBT::operator[](const char* index) {
-	if (is_compoud()) {
-		if (is_tiny_compoud())
-			return ((std::unordered_map<uint16_t, ENBT>*)data)->operator[](ToAliasedStr(index));
-		else
+    if (is_compound()) {
+        if (is_tiny_compound())
+            return ((std::unordered_map<uint16_t, ENBT>*)data)->operator[](ToAliasedStr(index));
+        else
 			return ((std::unordered_map<std::string, ENBT>*)data)->operator[](index);
-	}
-	throw std::invalid_argument("Invalid tid, cannont index compound");
+    }
+    throw std::invalid_argument("Invalid tid, cannot index compound");
 }
 void ENBT::remove(std::string name) {
-	if (is_tiny_compoud())
-		((std::unordered_map<uint16_t, ENBT>*)data)->erase(ToAliasedStr(name.c_str()));
-	else
+    if (is_tiny_compound())
+        ((std::unordered_map<uint16_t, ENBT>*)data)->erase(ToAliasedStr(name.c_str()));
+    else
 		((std::unordered_map<std::string, ENBT>*)data)->erase(name);
 }
 
@@ -31,16 +31,16 @@ const ENBT& ENBT::operator[](size_t index) const {
 
 	if (data_type_id.type == Type_ID::Type::structure)
 		return ((ENBT*)data)[index];
-	throw std::invalid_argument("Invalid tid, cannont index array");
+    throw std::invalid_argument("Invalid tid, cannot index array");
 }
 const ENBT& ENBT::operator[](const char* index) const {
-	if (is_compoud()) {
-		if(is_tiny_compoud())
-			return ((std::unordered_map<uint16_t, ENBT>*)data)->operator[](ToAliasedStr(index));
-		else
+    if (is_compound()) {
+        if (is_tiny_compound())
+            return ((std::unordered_map<uint16_t, ENBT>*)data)->operator[](ToAliasedStr(index));
+        else
 			return ((std::unordered_map<std::string, ENBT>*)data)->operator[](index);
-	}
-	throw std::invalid_argument("Invalid tid, cannont index compound");
+    }
+    throw std::invalid_argument("Invalid tid, cannot index compound");
 }
 
 ENBT ENBT::getIndex(size_t index) const {
@@ -84,24 +84,23 @@ ENBT ENBT::getIndex(size_t index) const {
 		return ((std::vector<ENBT>*)data)->operator[](index);
 	else if (data_type_id.type == Type_ID::Type::structure)
 		return ((ENBT*)data)[index];
-	else throw std::invalid_argument("Invalid tid, cannont index array");
+    else
+        throw std::invalid_argument("Invalid tid, cannot index array");
 }
 
 
 ENBT::operator std::unordered_map<std::string, ENBT>() const {
-	if (is_compoud()) {
-		if (is_tiny_compoud())
-		{
-			auto& tmp = *(std::unordered_map<uint16_t, ENBT>*)data;
-			std::unordered_map<std::string, ENBT> res;
+    if (is_compound()) {
+        if (is_tiny_compound()) {
+            auto& tmp = *(std::unordered_map<uint16_t, ENBT>*)data;
+            std::unordered_map<std::string, ENBT> res;
 			for (auto& temp : tmp) 
 				res[FromAliasedStr(temp.first)] = temp.second;
 			return res;
-		}
-		else
-			return *(std::unordered_map<std::string, ENBT>*)data;
-	}
-	throw std::invalid_argument("Invalid tid, cannont convert compound");
+        } else
+            return *(std::unordered_map<std::string, ENBT>*)data;
+    }
+    throw std::invalid_argument("Invalid tid, cannot convert compound");
 }
 
 template<class Target>
