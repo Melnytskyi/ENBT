@@ -913,7 +913,14 @@ Target simpleIntConvert(const ENBT::EnbtValue& val) {
 		return (Target)std::get<float>(val);
 	else if (std::holds_alternative<double>(val))
 		return (Target)std::get<double>(val);
-
+    else if(std::holds_alternative<std::string>(val)) {
+        if constexpr (std::is_unsigned_v<Target>)
+            return std::stoull(std::get<std::string>(val));
+        else if constexpr (std::is_floating_point_v<Target>)
+            return std::stod(std::get<std::string>(val));
+        else
+            return std::stoll(std::get<std::string>(val));
+    }
 	else
 		throw EnbtException("Invalid type for convert");
 }
@@ -923,35 +930,29 @@ ENBT::operator int8_t() const { return simpleIntConvert<int8_t>(content()); }
 ENBT::operator int16_t() const { return simpleIntConvert<int16_t>(content()); }
 ENBT::operator int32_t() const { return simpleIntConvert<int32_t>(content()); }
 ENBT::operator int64_t() const { return simpleIntConvert<int64_t>(content()); }
-ENBT::operator uint8_t() const { return simpleIntConvert<uint8_t>(content());
-}
-
-ENBT::operator uint16_t() const {
-    return simpleIntConvert<uint16_t>(content());
-}
-
-ENBT::operator uint32_t() const {
-    return simpleIntConvert<uint32_t>(content());
-}
-
-ENBT::operator uint64_t() const {
-    return simpleIntConvert<uint64_t>(content());
-}
-
-ENBT::operator float() const {
-    return simpleIntConvert<float>(content());
-}
-
-ENBT::operator double() const {
-    return simpleIntConvert<double>(content());
-}
+ENBT::operator uint8_t() const { return simpleIntConvert<uint8_t>(content()); }
+ENBT::operator uint16_t() const { return simpleIntConvert<uint16_t>(content()); }
+ENBT::operator uint32_t() const { return simpleIntConvert<uint32_t>(content()); }
+ENBT::operator uint64_t() const { return simpleIntConvert<uint64_t>(content()); }
+ENBT::operator float() const { return simpleIntConvert<float>(content()); }
+ENBT::operator double() const { return simpleIntConvert<double>(content()); }
 
 ENBT::operator std::string&() {
     return *std::get<std::string*>(content());
 }
 
 ENBT::operator std::string() const {
-    return *std::get<std::string*>(content());
+    std::visit([](auto&& arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, std::string>)
+            return arg;
+        else if constexpr( std::is_integral_v<T>)
+            return std::to_string(arg);
+        else if constexpr (std::is_same_v<T, uint8_t*>)
+            return std::string((char*)arg);
+        else
+            return std::string();
+    }, content());
 }
 
 ENBT::operator const uint8_t*() const {

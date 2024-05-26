@@ -64,7 +64,7 @@ public:
             floating,
             var_integer, //ony default and long length
             uuid,        //[16byte]
-            sarray,      // [(len)]{chars} if signed, endian convert will be enabled(simple array)
+            sarray,      // [(len)]{nums} if signed, endian convert will be enabled(simple array)
 
             compound,
             //if compound is signed it will be use strings refered by name id
@@ -616,6 +616,19 @@ public:
         return ENBT(new ENBT(std::move(val)), Type_ID(Type::optional, TypeLen::Tiny, false), 0, false);
     }
 
+    static ENBT compound() {
+        return ENBT(std::unordered_map<std::string, ENBT>());
+    }
+
+    static ENBT dynamic_array() {
+        return ENBT(std::vector<ENBT>(), Type::darray);
+    }
+
+    static ENBT fixed_array(size_t size) {
+        return ENBT(std::vector<ENBT>(size), Type::array);
+    }
+
+
     template <class T>
     ENBT(const std::vector<T>& array) {
         data_len = array.size();
@@ -990,20 +1003,23 @@ public:
         }
         return false;
     }
-	
 
+    bool contains(const std::string& index) const {
+        return contains(index.c_str());
+    }
 
+    Type getType() const {
+        return data_type_id.type;
+    }
 
-	Type getType() const {
-		return data_type_id.type;
-	}
-	TypeLen getTypeLen() const {
-		return data_type_id.length;
-	}
-	bool getTypeSign() const {
-		return data_type_id.is_signed;
-	}
-	uint64_t getTypeDomain() const {
+    TypeLen getTypeLen() const {
+        return data_type_id.length;
+    }
+
+    bool getTypeSign() const {
+        return data_type_id.is_signed;
+    }
+    uint64_t getTypeDomain() const {
 		if (data_type_id.type == Type::domain)
 			return data_type_id.domain_variant;
 		else throw EnbtException("The not domain");
@@ -1244,6 +1260,9 @@ public:
         ConstInterator(const ENBT& enbt, bool in_begin = true) {
             interate_type = enbt.data_type_id;
             switch (enbt.data_type_id.type) {
+            case ENBT::Type::none:
+                pointer = nullptr;
+                break;
             case ENBT::Type::array:
             case ENBT::Type::darray:
 				if(in_begin)
@@ -1291,33 +1310,36 @@ public:
 
         ConstInterator(const ConstInterator& interator) {
             interate_type = interator.interate_type;
-            switch (interate_type.type)
-			{
-			case ENBT::Type::array:
-			case ENBT::Type::darray:
-				pointer = new std::vector<ENBT>::iterator(
-					(*(std::vector<ENBT>::iterator*)interator.pointer)
-				);
-				break;
-			case ENBT::Type::compound:
-				if (interate_type.is_signed)
-					pointer = new std::unordered_map<uint16_t, ENBT>::iterator(
-						(*(std::unordered_map<uint16_t, ENBT>::iterator*)interator.pointer)
-					);
-				else
-					pointer = new std::unordered_map<std::string, ENBT>::iterator(
-						(*(std::unordered_map<std::string, ENBT>::iterator*)interator.pointer)
-					);
-				break;
-			default:
-				throw EnbtException("Unreachable exception in non debug enviropement");
+            switch (interate_type.type) {
+            case ENBT::Type::none:
+                pointer = nullptr;
+                break;
+                case ENBT::Type::array:
+                case ENBT::Type::darray:
+                    pointer = new std::vector<ENBT>::iterator(
+                        (*(std::vector<ENBT>::iterator*)interator.pointer)
+                    );
+                    break;
+                case ENBT::Type::compound:
+                    if (interate_type.is_signed)
+                        pointer = new std::unordered_map<uint16_t, ENBT>::iterator(
+                            (*(std::unordered_map<uint16_t, ENBT>::iterator*)interator.pointer)
+                        );
+                    else
+                        pointer = new std::unordered_map<std::string, ENBT>::iterator(
+                            (*(std::unordered_map<std::string, ENBT>::iterator*)interator.pointer)
+                        );
+                    break;
+                default:
+                    throw EnbtException("Unreachable exception in non debug enviropement");
 			}
         }
 
         ConstInterator& operator++() {
-            switch (interate_type.type)
-			{
-			case ENBT::Type::array:
+            switch (interate_type.type) {
+			case ENBT::Type::none:
+                break;
+            case ENBT::Type::array:
 			case ENBT::Type::darray:
 				(*(std::vector<ENBT>::iterator*)pointer)++;
 				break;
@@ -1336,9 +1358,10 @@ public:
 			return temp;
 		}
 		ConstInterator& operator--() {
-			switch (interate_type.type)
-			{
-			case ENBT::Type::array:
+            switch (interate_type.type) {
+            case ENBT::Type::none:
+                break;
+            case ENBT::Type::array:
 			case ENBT::Type::darray:
 				(*(std::vector<ENBT>::iterator*)pointer)--;
 				break;
@@ -1348,8 +1371,8 @@ public:
 				else
 					(*(std::unordered_map<std::string, ENBT>::iterator*)pointer)--;
 				break;
-			}
-			return *this;
+            }
+            return *this;
 		}
 		ConstInterator operator--(int) {
 			ConstInterator temp = *this;
@@ -1358,9 +1381,10 @@ public:
 		}
 
 		bool operator==(const ConstInterator& interator) const {
-			switch (interate_type.type)
-			{
-			case ENBT::Type::array:
+			switch (interate_type.type) {
+            case ENBT::Type::none:
+                return false;
+            case ENBT::Type::array:
 			case ENBT::Type::darray:
 				return
 					(*(std::vector<ENBT>::iterator*)pointer)
@@ -1382,9 +1406,10 @@ public:
 			return false;
 		}
 		bool operator!=(const ConstInterator& interator) const {
-			switch (interate_type.type)
-			{
-			case ENBT::Type::array:
+            switch (interate_type.type) {
+            case ENBT::Type::none:
+                return true;
+            case ENBT::Type::array:
 			case ENBT::Type::darray:
 				return
 					(*(std::vector<ENBT>::iterator*)pointer)
@@ -1402,36 +1427,34 @@ public:
 					!=
 					(*(std::unordered_map<std::string, ENBT>::iterator*)interator.pointer);
 				break;
-			}
-			return false;
-		}
+            }
+            return true;
+        }
 
-		std::pair<const std::string, const ENBT&> operator*() const {
-			switch (interate_type.type)
-			{
-			case ENBT::Type::array:
-			case ENBT::Type::darray:
-				return { "", *(*(std::vector<ENBT>::iterator*)pointer) };
-			case ENBT::Type::compound:
-				if (interate_type.is_signed)
-				{
-					auto& tmp = (*(std::unordered_map<uint16_t, ENBT>::iterator*)pointer);
-					return std::pair<const std::string, const ENBT&>(
-						std::string(ENBT::FromAliasedStr(tmp->first)),
-						tmp->second
-						);
-				}
-				else
-				{
-					auto& tmp = (*(std::unordered_map<std::string, ENBT>::iterator*)pointer);
-					return std::pair<const std::string, const ENBT&>(
-						tmp->first,
-						tmp->second
-					);
-				}
-			}
-			throw EnbtException("Unreachable exception in non debug enviropement");
-		}
+        std::pair<std::string, const ENBT&> operator*() const {
+            switch (interate_type.type) {
+            case ENBT::Type::none:
+                return {"", ENBT()};
+            case ENBT::Type::array:
+            case ENBT::Type::darray:
+                return {"", *(*(std::vector<ENBT>::iterator*)pointer)};
+            case ENBT::Type::compound:
+                if (interate_type.is_signed) {
+                    auto& tmp = (*(std::unordered_map<uint16_t, ENBT>::iterator*)pointer);
+                    return std::pair<std::string, const ENBT&>(
+                        std::string(ENBT::FromAliasedStr(tmp->first)),
+                        tmp->second
+                    );
+                } else {
+                    auto& tmp = (*(std::unordered_map<std::string, ENBT>::iterator*)pointer);
+                    return std::pair<std::string, const ENBT&>(
+                        tmp->first,
+                        tmp->second
+                    );
+                }
+            }
+            throw EnbtException("Unreachable exception in non debug enviropement");
+        }
     };
 
     class Interator : public ConstInterator {
@@ -1472,33 +1495,32 @@ public:
 		}
 		bool operator!=(const Interator& interator) const {
 			return ConstInterator::operator!=(interator);
-		}
-		std::pair<const std::string, ENBT&> operator*()  {
-			switch (interate_type.type)
-			{
-			case ENBT::Type::array:
-			case ENBT::Type::darray:
-				return { "", *(*(std::vector<ENBT>::iterator*)pointer) };
-			case ENBT::Type::compound:
-				if (interate_type.is_signed)
-				{
-					auto& tmp = (*(std::unordered_map<uint16_t, ENBT>::iterator*)pointer);
-					return std::pair<const std::string, ENBT&>(
-						std::string(ENBT::FromAliasedStr(tmp->first)),
-						tmp->second
-					);
-				}
-				else
-				{
-					auto& tmp = (*(std::unordered_map<std::string, ENBT>::iterator*)pointer);
-					return std::pair<const std::string, ENBT&>(
-						tmp->first,
-						tmp->second
-					);
-				}
-			}
-			throw EnbtException("Unreachable exception in non debug enviropement");
-		}
+        }
+
+        std::pair<std::string, ENBT&> operator*() {
+            switch (interate_type.type) {
+            case ENBT::Type::none:
+                throw EnbtException("Invalid type");
+            case ENBT::Type::array:
+            case ENBT::Type::darray:
+                return {"", *(*(std::vector<ENBT>::iterator*)pointer)};
+            case ENBT::Type::compound:
+                if (interate_type.is_signed) {
+                    auto& tmp = (*(std::unordered_map<uint16_t, ENBT>::iterator*)pointer);
+                    return std::pair<std::string, ENBT&>(
+                        std::string(ENBT::FromAliasedStr(tmp->first)),
+                        tmp->second
+                    );
+                } else {
+                    auto& tmp = (*(std::unordered_map<std::string, ENBT>::iterator*)pointer);
+                    return std::pair<std::string, ENBT&>(
+                        tmp->first,
+                        tmp->second
+                    );
+                }
+            }
+            throw EnbtException("Unreachable exception in non debug environemnt");
+        }
     };
 
     class CopyInterator {
@@ -1509,8 +1531,7 @@ public:
     public:
         CopyInterator(const ENBT& enbt, bool in_begin = true) {
             interate_type = enbt.data_type_id;
-            switch (enbt.data_type_id.type)
-			{
+            switch (enbt.data_type_id.type) {
 			case ENBT::Type::sarray:
 				if(in_begin)
 					pointer = const_cast<uint8_t*>(enbt.getPtr());
@@ -2533,12 +2554,12 @@ public:
 			case ENBT::TypeLen::Short:		return 2;
 			case ENBT::TypeLen::Default:	return 4;
 			case ENBT::TypeLen::Long:		return 8;
-			}
-			break;
-		case ENBT::Type::uuid:
-			return 16;
-		case ENBT::Type::bit:
-			return 1;
+            }
+            return 0;
+        case ENBT::Type::uuid:
+            return 16;
+        case ENBT::Type::bit:
+            return 1;
 		default:
 			return 0;
 		}
@@ -2677,31 +2698,28 @@ public:
 		}
 	}
 	//move read stream cursor to value in compound, return true if value found
-	static bool FindValueCompound(std::istream& read_stream, ENBT::Type_ID tid, std::string key) {
-		size_t len = ReadDefineLen(read_stream, tid);
-		if (tid.is_signed)
-		{
-			uint16_t adaptived = ENBT::ToAliasedStr(key.c_str());
-			for (size_t i = 0; i < len; i++) {
+    static bool FindValueCompound(std::istream& read_stream, ENBT::Type_ID tid, const std::string& key) {
+        size_t len = ReadDefineLen(read_stream, tid);
+        if (tid.is_signed) {
+            uint16_t adaptived = ENBT::ToAliasedStr(key.c_str());
+            for (size_t i = 0; i < len; i++) {
 				if (ReadDefineLen<uint16_t>(read_stream) != adaptived)SkipValue(read_stream, ReadTypeID(read_stream));
 				else return true;
 			}
 			return false;
-		}
-		else {
-			for (size_t i = 0; i < len; i++) {
-				if (ReadCompoundString(read_stream) != key)SkipValue(read_stream, ReadTypeID(read_stream));
+        } else {
+            for (size_t i = 0; i < len; i++) {
+                if (ReadCompoundString(read_stream) != key)SkipValue(read_stream, ReadTypeID(read_stream));
 				else return true;
-			}
-			return false;
-		}
-	}
+            }
+            return false;
+        }
+    }
 
-
-	static void IndexStaticArray(std::istream& read_stream, uint64_t index,uint64_t len,ENBT::Type_ID targetId) {
-		if (index >= len)
-			throw EnbtException('[' + std::to_string(index) + "] out of range " + std::to_string(len));
-		if (uint8_t skiper = CanFastIndex(targetId)) {
+    static void IndexStaticArray(std::istream& read_stream, uint64_t index, uint64_t len, ENBT::Type_ID targetId) {
+        if (index >= len)
+            throw EnbtException('[' + std::to_string(index) + "] out of range " + std::to_string(len));
+        if (uint8_t skiper = CanFastIndex(targetId)) {
 			if(targetId != ENBT::Type::bit)
 				read_stream.seekg(read_stream.tellg() += index * skiper);
 			else
@@ -2709,17 +2727,18 @@ public:
 		}
 		else 
 			for (uint64_t i = 0; i < index; i++)
-				SkipValue(read_stream, targetId);
-		
-	}
-	static void IndexDynArray(std::istream& read_stream,uint64_t index, uint64_t len) {
-		if (index >= len)
-			throw EnbtException('[' + std::to_string(index) + "] out of range " + std::to_string(len));
+                SkipValue(read_stream, targetId);
+    }
+
+    static void IndexDynArray(std::istream& read_stream, uint64_t index, uint64_t len) {
+        if (index >= len)
+            throw EnbtException('[' + std::to_string(index) + "] out of range " + std::to_string(len));
 		for (uint64_t i = 0; i < index; i++)
 			SkipToken(read_stream);
-	}
-	static void IndexArray(std::istream& read_stream, uint64_t index, ENBT::Type_ID arr_tid) {
-		switch (arr_tid.type)
+    }
+
+    static void IndexArray(std::istream& read_stream, uint64_t index, ENBT::Type_ID arr_tid) {
+        switch (arr_tid.type)
 		{
 		case ENBT::Type::array:
 		{
@@ -2734,8 +2753,8 @@ public:
 		default:
 			throw EnbtException("Invalid type id");
 		}
-	}
-	static void IndexArray(std::istream& read_stream, uint64_t index) {
+    }
+    static void IndexArray(std::istream& read_stream, uint64_t index) {
 		IndexArray(read_stream, index, ReadTypeID(read_stream));
 	}
 
