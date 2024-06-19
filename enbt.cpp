@@ -2,6 +2,90 @@
 #include <sstream>
 #pragma region ENBT constructors
 
+ENBT::ENBT(const enbt::compound& compound)
+    : ENBT((const ENBT&)compound) {}
+
+ENBT::ENBT(enbt::compound&& compound)
+    : ENBT((const ENBT&)compound) {}
+
+ENBT::ENBT(const enbt::fixed_array& fixed_array)
+    : ENBT((const ENBT&)fixed_array) {}
+
+ENBT::ENBT(enbt::fixed_array&& fixed_array)
+    : ENBT((const ENBT&)fixed_array) {}
+
+ENBT::ENBT(const enbt::dynamic_array& dynamic_array)
+    : ENBT((const ENBT&)dynamic_array) {}
+
+ENBT::ENBT(enbt::dynamic_array&& dynamic_array)
+    : ENBT((const ENBT&)dynamic_array) {}
+
+ENBT::ENBT(const enbt::simple_array_ui8& simple_array_ui8)
+    : ENBT((const ENBT&)simple_array_ui8) {}
+
+ENBT::ENBT(enbt::simple_array_ui8&& simple_array_ui8)
+    : ENBT((const ENBT&)simple_array_ui8) {}
+
+ENBT::ENBT(const enbt::simple_array_ui16& simple_array_ui16)
+    : ENBT((const ENBT&)simple_array_ui16) {}
+
+ENBT::ENBT(enbt::simple_array_ui16&& simple_array_ui16)
+    : ENBT((const ENBT&)simple_array_ui16) {}
+
+ENBT::ENBT(const enbt::simple_array_ui32& simple_array_ui32)
+    : ENBT((const ENBT&)simple_array_ui32) {}
+
+ENBT::ENBT(enbt::simple_array_ui32&& simple_array_ui32)
+    : ENBT((const ENBT&)simple_array_ui32) {}
+
+ENBT::ENBT(const enbt::simple_array_ui64& simple_array_ui64)
+    : ENBT((const ENBT&)simple_array_ui64) {}
+
+ENBT::ENBT(enbt::simple_array_ui64&& simple_array_ui64)
+    : ENBT((const ENBT&)simple_array_ui64) {}
+
+ENBT::ENBT(const enbt::simple_array_i8& simple_array_i8)
+    : ENBT((const ENBT&)simple_array_i8) {}
+
+ENBT::ENBT(enbt::simple_array_i8&& simple_array_i8)
+    : ENBT((const ENBT&)simple_array_i8) {}
+
+ENBT::ENBT(const enbt::simple_array_i16& simple_array_i16)
+    : ENBT((const ENBT&)simple_array_i16) {}
+
+ENBT::ENBT(enbt::simple_array_i16&& simple_array_i16)
+    : ENBT((const ENBT&)simple_array_i16) {}
+
+ENBT::ENBT(const enbt::simple_array_i32& simple_array_i32)
+    : ENBT((const ENBT&)simple_array_i32) {}
+
+ENBT::ENBT(enbt::simple_array_i32&& simple_array_i32)
+    : ENBT((const ENBT&)simple_array_i32) {}
+
+ENBT::ENBT(const enbt::simple_array_i64& simple_array_i64)
+    : ENBT((const ENBT&)simple_array_i64) {}
+
+ENBT::ENBT(enbt::simple_array_i64&& simple_array_i64)
+    : ENBT((const ENBT&)simple_array_i64) {}
+
+ENBT::ENBT(const enbt::bit& bit)
+    : ENBT((const ENBT&)bit) {}
+
+ENBT::ENBT(enbt::bit&& bit)
+    : ENBT((const ENBT&)bit) {}
+
+ENBT::ENBT(const enbt::optional& optional)
+    : ENBT((const ENBT&)optional) {}
+
+ENBT::ENBT(enbt::optional&& optional)
+    : ENBT((const ENBT&)optional) {}
+
+ENBT::ENBT(const enbt::uuid& uuid)
+    : ENBT((const ENBT&)uuid) {}
+
+ENBT::ENBT(enbt::uuid&& uuid)
+    : ENBT((const ENBT&)uuid) {}
+
 ENBT::ENBT() {
     data = nullptr;
     data_len = 0;
@@ -942,6 +1026,10 @@ ENBT::operator std::string&() {
     return *std::get<std::string*>(content());
 }
 
+ENBT::operator const std::string&() const {
+    return *std::get<std::string*>(content());
+}
+
 ENBT::operator std::string() const {
     return std::visit([](auto&& arg) {
         using T = std::decay_t<decltype(arg)>;
@@ -1065,150 +1153,3 @@ std::pair<std::string, ENBT> ENBT::CopyInterator::operator*() const {
     }
     throw EnbtException("Unreachable exception in non debug environment");
 }
-
-#pragma region enbt_custom_operators_copy
-
-template <>
-ENBT& ENBT::operator=(const enbt::compound& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::fixed_array& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::dynamic_array& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui8& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui16& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui32& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui64& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i8& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i16& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i32& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i64& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::bit& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::optional& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(const enbt::uuid& tag) {
-    return *this = (const ENBT&)tag;
-}
-
-#pragma endregion
-#pragma region enbt_custom_operators_move
-
-template <>
-ENBT& ENBT::operator=(enbt::compound&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::fixed_array&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::dynamic_array&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui8&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui16&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui32&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui64&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i8&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i16&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i32&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i64&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::bit&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::optional&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-template <>
-ENBT& ENBT::operator=(enbt::uuid&& tag) {
-    return *this = (ENBT&&)tag;
-}
-
-#pragma endregion

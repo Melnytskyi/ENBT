@@ -28,6 +28,28 @@ public:
         : std::exception("EnbtException") {}
 };
 
+namespace enbt {
+    class compound;
+    class fixed_array;
+    class dynamic_array;
+    template <class T>
+    class simple_array;
+
+
+    using simple_array_ui8 = simple_array<uint8_t>;
+    using simple_array_ui16 = simple_array<uint16_t>;
+    using simple_array_ui32 = simple_array<uint32_t>;
+    using simple_array_ui64 = simple_array<uint64_t>;
+    using simple_array_i8 = simple_array<int8_t>;
+    using simple_array_i16 = simple_array<int16_t>;
+    using simple_array_i32 = simple_array<int32_t>;
+    using simple_array_i64 = simple_array<int64_t>;
+
+    class bit;
+    class optional;
+    class uuid;
+}
+
 class ENBT {
     template <typename T, typename Enable = void>
     struct is_optional : std::false_type {};
@@ -478,6 +500,36 @@ public:
         data = (uint8_t*)res;
     }
 
+    ENBT(const enbt::compound& compound);
+    ENBT(enbt::compound&& compound);
+    ENBT(const enbt::fixed_array& fixed_array);
+    ENBT(enbt::fixed_array&& fixed_array);
+    ENBT(const enbt::dynamic_array& dynamic_array);
+    ENBT(enbt::dynamic_array&& dynamic_array);
+    ENBT(const enbt::simple_array_ui8& simple_array_ui8);
+    ENBT(enbt::simple_array_ui8&& simple_array_ui8);
+    ENBT(const enbt::simple_array_ui16& simple_array_ui16);
+    ENBT(enbt::simple_array_ui16&& simple_array_ui16);
+    ENBT(const enbt::simple_array_ui32& simple_array_ui32);
+    ENBT(enbt::simple_array_ui32&& simple_array_ui32);
+    ENBT(const enbt::simple_array_ui64& simple_array_ui64);
+    ENBT(enbt::simple_array_ui64&& simple_array_ui64);
+    ENBT(const enbt::simple_array_i8& simple_array_i8);
+    ENBT(enbt::simple_array_i8&& simple_array_i8);
+    ENBT(const enbt::simple_array_i16& simple_array_i16);
+    ENBT(enbt::simple_array_i16&& simple_array_i16);
+    ENBT(const enbt::simple_array_i32& simple_array_i32);
+    ENBT(enbt::simple_array_i32&& simple_array_i32);
+    ENBT(const enbt::simple_array_i64& simple_array_i64);
+    ENBT(enbt::simple_array_i64&& simple_array_i64);
+    ENBT(const enbt::bit& bit);
+    ENBT(enbt::bit&& bit);
+    ENBT(const enbt::optional& optional);
+    ENBT(enbt::optional&& optional);
+    ENBT(const enbt::uuid& uuid);
+    ENBT(enbt::uuid&& uuid);
+
+
     template <class T = ENBT>
     ENBT(const std::vector<ENBT>& array) {
         bool as_array = true;
@@ -625,7 +677,6 @@ public:
         } else if constexpr (is_optional<std::remove_cvref_t<T>>::value) {
             if (set_value.has_value())
                 operator=(optional(*set_value));
-
             else
                 operator=(optional());
         } else
@@ -766,7 +817,9 @@ public:
     }
 
     bool contains(const std::string& index) const {
-        return contains(index.c_str());
+        if (is_compound())
+            return ((std::unordered_map<std::string, ENBT>*)data)->contains(index);
+        return false;
     }
 
     Type getType() const {
@@ -995,6 +1048,7 @@ public:
     operator double() const;
 
     operator std::string&();
+    operator const std::string&() const;
     operator std::string() const;
     operator const uint8_t*() const;
     operator const int8_t*() const;
@@ -1821,23 +1875,18 @@ namespace enbt {
             return *this;
         }
 
-        void set(size_t index, const ENBT& value) {
+        template <class T>
+        void set(size_t index, T&& value) {
             if (as_const)
                 throw EnbtException("This array is constant");
+            ENBT to_set(std::forward<T>(value));
 
-            if (index != 0 || fixed_type.type != ENBT::Type::none)
-                if (value.type_id() != fixed_type)
-                    throw EnbtException("Invalid set value, set value must be same as every item in fixed array");
-            (*proxy)[index] = value;
-        }
 
-        void set(size_t index, ENBT&& value) {
-            if (as_const)
-                throw EnbtException("This array is constant");
-            if (index != 0 || fixed_type.type != ENBT::Type::none)
-                if (value.type_id() != fixed_type)
+            if (index != 0 || fixed_type.type != ENBT::Type::none) {
+                if (to_set.type_id() != fixed_type)
                     throw EnbtException("Invalid set value, set value must be same as every item in fixed array");
-            (*proxy)[index] = std::move(value);
+            }
+            (*proxy)[index] = std::move(to_set);
         }
 
         const ENBT& operator[](size_t index) const {
@@ -1936,12 +1985,10 @@ namespace enbt {
             return *this;
         }
 
-        void push_back(const ENBT& value) {
-            proxy->push_back(value);
-        }
-
-        void push_back(ENBT&& value) {
-            proxy->push_back(std::move(value));
+        template <class T>
+        void push_back(T&& value) {
+            ENBT to_set(std::forward<T>(value));
+            proxy->push_back(std::move(to_set));
         }
 
         template <class... _Values>
@@ -2412,7 +2459,7 @@ namespace enbt {
             return holder;
         }
 
-        operator const ENBT&&() && {
+        operator ENBT&&() && {
             return std::move(holder);
         }
     };
@@ -2472,7 +2519,7 @@ namespace enbt {
             return holder;
         }
 
-        operator const ENBT&&() && {
+        operator ENBT&&() && {
             return std::move(holder);
         }
     };
@@ -2557,7 +2604,7 @@ namespace enbt {
             return holder;
         }
 
-        operator const ENBT&&() && {
+        operator ENBT&&() && {
             return std::move(holder);
         }
     };
@@ -2623,7 +2670,7 @@ namespace enbt {
             return holder;
         }
 
-        operator const ENBT&&() && {
+        operator ENBT&&() && {
             return std::move(holder);
         }
     };
@@ -2697,7 +2744,7 @@ namespace enbt {
             return holder;
         }
 
-        operator const ENBT&&() && {
+        operator ENBT&&() && {
             return std::move(holder);
         }
     };
@@ -2780,7 +2827,7 @@ namespace enbt {
             return holder;
         }
 
-        operator const ENBT&&() && {
+        operator ENBT&&() && {
             return std::move(holder);
         }
     };
@@ -2840,73 +2887,11 @@ namespace enbt {
             return holder;
         }
 
-        operator const ENBT&&() && {
+        operator ENBT&&() && {
             return std::move(holder);
         }
     };
 }
-
-    #pragma region enbt_custom_operators_copy
-template <>
-ENBT& ENBT::operator=(const enbt::compound& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::fixed_array& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::dynamic_array& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui8& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui16& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui32& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_ui64& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i8& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i16& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i32& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::simple_array_i64& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::bit& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::optional& tag);
-template <>
-ENBT& ENBT::operator=(const enbt::uuid& tag);
-    #pragma endregion
-    #pragma region enbt_custom_operators_move
-template <>
-ENBT& ENBT::operator=(enbt::compound&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::fixed_array&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::dynamic_array&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui8&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui16&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui32&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_ui64&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i8&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i16&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i32&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::simple_array_i64&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::bit&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::optional&& tag);
-template <>
-ENBT& ENBT::operator=(enbt::uuid&& tag);
-    #pragma endregion
-
 inline std::istream& operator>>(std::istream& is, ENBT::UUID& uuid) {
     is >> uuid.data[0] >> uuid.data[1] >> uuid.data[2] >> uuid.data[3] >> uuid.data[4] >> uuid.data[5] >> uuid.data[6] >> uuid.data[7];
     is >> uuid.data[8] >> uuid.data[9] >> uuid.data[10] >> uuid.data[11] >> uuid.data[12] >> uuid.data[13] >> uuid.data[14] >> uuid.data[15];
