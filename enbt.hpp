@@ -150,7 +150,6 @@ public:
         }
 
         Type_ID(Type ty, LenType lt, bool sign) {
-            sizeof(Type_ID);
             type = ty;
             length = lt;
             endian = Endian::native;
@@ -713,8 +712,12 @@ public:
         return data_type_id.type == Type::sarray;
     }
 
-    bool is_numeric() {
+    bool is_numeric() const {
         return data_type_id.type == Type::integer || data_type_id.type == Type::var_integer || data_type_id.type == Type::floating;
+    }
+
+    bool is_none() const {
+        return data_type_id.type == Type::none;
     }
 
     ENBT& operator[](size_t index);
@@ -805,8 +808,7 @@ public:
 
     bool contains() const {
         if (data_type_id.type == Type::optional)
-            if (data_type_id.is_signed)
-                return true;
+            return data_type_id.is_signed;
         return data_type_id.type != Type::none;
     }
 
@@ -2633,14 +2635,13 @@ namespace enbt {
         }
 
         simple_array(size_t array_size)
-            : holder(ENBT::Type_ID(ENBT::Type::sarray, simple_array_ref<T>::len_type, std::is_signed_v<T>), array_size),
-              simple_array_ref<T>(holder) {}
+            : simple_array_ref<T>(holder), holder(ENBT::Type_ID(ENBT::Type::sarray, simple_array_ref<T>::len_type, std::is_signed_v<T>), array_size) {}
 
         simple_array(const simple_array& copy)
-            : holder(copy.holder), simple_array_ref<T>(holder) {}
+            : simple_array_ref<T>(holder), holder(copy.holder) {}
 
         simple_array(simple_array&& move)
-            : holder(std::move(move.holder)), simple_array_ref<T>(holder) {}
+            : simple_array_ref<T>(holder), holder(std::move(move.holder)) {}
 
         simple_array& operator=(const simple_array& copy) {
             holder = copy.holder;
@@ -2892,27 +2893,6 @@ namespace enbt {
         }
     };
 }
-inline std::istream& operator>>(std::istream& is, ENBT::UUID& uuid) {
-    is >> uuid.data[0] >> uuid.data[1] >> uuid.data[2] >> uuid.data[3] >> uuid.data[4] >> uuid.data[5] >> uuid.data[6] >> uuid.data[7];
-    is >> uuid.data[8] >> uuid.data[9] >> uuid.data[10] >> uuid.data[11] >> uuid.data[12] >> uuid.data[13] >> uuid.data[14] >> uuid.data[15];
-    return is;
-}
-
-inline std::ostream& operator<<(std::ostream& os, ENBT::UUID& uuid) {
-    os << uuid.data[0] << uuid.data[1] << uuid.data[2] << uuid.data[3] << uuid.data[4] << uuid.data[5] << uuid.data[6] << uuid.data[7];
-    os << uuid.data[8] << uuid.data[9] << uuid.data[10] << uuid.data[11] << uuid.data[12] << uuid.data[13] << uuid.data[14] << uuid.data[15];
-    return os;
-}
-
-inline std::istream& operator>>(std::istream& is, ENBT::Type_ID& tid) {
-    is >> tid.raw;
-    return is;
-}
-
-inline std::ostream& operator<<(std::ostream& os, ENBT::Type_ID tid) {
-    os << tid.raw;
-    return os;
-}
 
 namespace std {
     template <>
@@ -2921,7 +2901,6 @@ namespace std {
             return hash<uint64_t>()(uuid.data[0]) ^ hash<uint64_t>()(uuid.data[1]);
         }
     };
-
 }
 
 class ENBTHelper {
@@ -2943,27 +2922,27 @@ public:
         } m;
 
         if (len <= m.b8) {
-            write_stream << b.part[0];
+            write_stream << b.part[7];
         } else if (len <= m.b16) {
             b.part[0] |= 1;
-            write_stream << b.part[0];
-            write_stream << b.part[1];
+            write_stream << b.part[7];
+            write_stream << b.part[6];
         } else if (len <= m.b32) {
             b.part[0] |= 2;
-            write_stream << b.part[0];
-            write_stream << b.part[1];
-            write_stream << b.part[2];
-            write_stream << b.part[3];
+            write_stream << b.part[7];
+            write_stream << b.part[6];
+            write_stream << b.part[5];
+            write_stream << b.part[4];
         } else if (len <= m.b64) {
             b.part[0] |= 3;
-            write_stream << b.part[0];
-            write_stream << b.part[1];
-            write_stream << b.part[2];
-            write_stream << b.part[3];
-            write_stream << b.part[4];
-            write_stream << b.part[5];
-            write_stream << b.part[6];
             write_stream << b.part[7];
+            write_stream << b.part[6];
+            write_stream << b.part[5];
+            write_stream << b.part[4];
+            write_stream << b.part[3];
+            write_stream << b.part[2];
+            write_stream << b.part[1];
+            write_stream << b.part[0];
         } else
             throw std::overflow_error("uint64_t Cannot put in to uint60_t");
     }
@@ -2988,7 +2967,7 @@ public:
     }
 
     static void WriteTypeID(std::ostream& write_stream, ENBT::Type_ID tid) {
-        write_stream << tid;
+        write_stream << tid.raw;
     }
 
     template <class T>
@@ -3027,6 +3006,15 @@ public:
         delete[] arr;
     }
 
+    static void WriteString(std::ostream& write_stream, const ENBT& val) {
+        const std::string& str_ref = (const std::string&)val;
+        size_t real_size = str_ref.size();
+        size_t size_without_null = real_size ? (str_ref[real_size - 1] != 0 ? real_size : real_size - 1) : 0;
+        WriteCompressLen(write_stream, size_without_null);
+        WriteArray(write_stream, str_ref.data(), size_without_null);
+    }
+
+
     template <class T>
     static void WriteDefineLen(std::ostream& write_stream, T value) {
         return WriteValue(write_stream, value, std::endian::little);
@@ -3063,8 +3051,7 @@ public:
         auto result = std::get<std::unordered_map<std::string, ENBT>*>(val.content());
         WriteDefineLen(write_stream, result->size(), val.type_id());
         for (auto& it : *result) {
-            WriteCompressLen(write_stream, it.first.size());
-            WriteArray(write_stream, it.first.c_str(), it.first.size());
+            WriteString(write_stream, it.first);
             WriteToken(write_stream, it.second);
         }
     }
@@ -3143,11 +3130,6 @@ public:
         }
     }
 
-    static void WriteString(std::ostream& write_stream, const ENBT& val) {
-        WriteCompressLen(write_stream, val.size());
-        WriteArray(write_stream, val.getPtr(), val.size());
-    }
-
     static void WriteValue(std::ostream& write_stream, const ENBT& val) {
         ENBT::Type_ID tid = val.type_id();
         switch (tid.type) {
@@ -3217,7 +3199,7 @@ public:
     }
 
     static void WriteToken(std::ostream& write_stream, const ENBT& val) {
-        write_stream << val.type_id();
+        write_stream << val.type_id().raw;
         WriteValue(write_stream, val);
     }
 
@@ -3239,7 +3221,7 @@ public:
 
     static ENBT::Type_ID ReadTypeID(std::istream& read_stream) {
         ENBT::Type_ID result;
-        read_stream >> result;
+        read_stream >> result.raw;
         return result;
     }
 
@@ -3378,12 +3360,12 @@ public:
         }
     }
 
-    static std::string ReadCompoundString(std::istream& read_stream) {
+    static std::string ReadString(std::istream& read_stream) {
         uint64_t read = ReadCompressLen(read_stream);
         std::string res;
-        res.resize(read);
+        res.reserve(read);
         for (uint64_t i = 0; i < read; i++)
-            read_stream >> res[i];
+            res.push_back(ReadValue<char>(read_stream));
         return res;
     }
 
@@ -3391,7 +3373,7 @@ public:
         size_t len = ReadDefineLen(read_stream, tid);
         std::unordered_map<std::string, ENBT> result;
         for (size_t i = 0; i < len; i++) {
-            std::string key = ReadCompoundString(read_stream);
+            std::string key = ReadString(read_stream);
             result[key] = ReadToken(read_stream);
         }
         return result;
@@ -3461,11 +3443,6 @@ public:
             throw EnbtException();
         }
         return res;
-    }
-
-    static ENBT ReadString(std::istream& read_stream) {
-        uint64_t len = ReadCompressLen(read_stream);
-        return ENBT(ReadCompoundString(read_stream));
     }
 
     static ENBT ReadValue(std::istream& read_stream, ENBT::Type_ID tid) {
@@ -3722,7 +3699,7 @@ public:
     static bool FindValueCompound(std::istream& read_stream, ENBT::Type_ID tid, const std::string& key) {
         size_t len = ReadDefineLen(read_stream, tid);
         for (size_t i = 0; i < len; i++) {
-            if (ReadCompoundString(read_stream) != key)
+            if (ReadString(read_stream) != key)
                 SkipValue(read_stream, ReadTypeID(read_stream));
             else
                 return true;
