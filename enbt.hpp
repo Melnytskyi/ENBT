@@ -1081,6 +1081,10 @@ public:
     operator UUID() const;
     operator std::optional<ENBT>() const;
 
+    std::string convert_to_str() const {
+        return operator std::string();
+    }
+
     class ConstInterator {
     protected:
         ENBT::Type_ID iterate_type;
@@ -1888,6 +1892,7 @@ namespace enbt {
                 if (to_set.type_id() != fixed_type)
                     throw EnbtException("Invalid set value, set value must be same as every item in fixed array");
             }
+            fixed_type = to_set.type_id();
             (*proxy)[index] = std::move(to_set);
         }
 
@@ -2904,6 +2909,13 @@ namespace std {
 }
 
 class ENBTHelper {
+    template <class T>
+    static T _read_as_(std::istream& input_stream) {
+        T res;
+        input_stream.read((char*)&res, sizeof(T));
+        return res;
+    }
+
 public:
     static void WriteCompressLen(std::ostream& write_stream, uint64_t len) {
         union {
@@ -3212,7 +3224,7 @@ public:
         do {
             if (bitOffset == max_offset)
                 throw EnbtException("Var value too big");
-            read_stream >> currentByte;
+            currentByte = _read_as_<char>(read_stream);
             decodedInt |= T(currentByte & 0b01111111) << bitOffset;
             bitOffset += 7;
         } while ((currentByte & 0b10000000) != 0);
@@ -3221,7 +3233,7 @@ public:
 
     static ENBT::Type_ID ReadTypeID(std::istream& read_stream) {
         ENBT::Type_ID result;
-        read_stream >> result.raw;
+        result.raw = _read_as_<uint8_t>(read_stream);
         return result;
     }
 
@@ -3230,12 +3242,12 @@ public:
         T tmp;
         if constexpr (std::is_same<T, ENBT::UUID>()) {
             for (size_t i = 0; i < 16; i++)
-                read_stream >> tmp.data[i];
+                tmp.data[i] = _read_as_<uint8_t>(read_stream);
             ENBT::ConvertEndian(endian, tmp.data, 16);
         } else {
             uint8_t* proxy = (uint8_t*)&tmp;
             for (size_t i = 0; i < sizeof(T); i++)
-                read_stream >> proxy[i];
+                proxy[i] = _read_as_<uint8_t>(read_stream);
             ENBT::ConvertEndian(endian, tmp);
         }
         return tmp;
@@ -3246,7 +3258,7 @@ public:
         T* tmp = new T[len];
         if constexpr (sizeof(T) == 1) {
             for (size_t i = 0; i < len; i++)
-                read_stream >> tmp[i];
+                tmp[i] = _read_as_<uint8_t>(read_stream);
         } else {
             for (size_t i = 0; i < len; i++)
                 tmp[i] = ReadValue<T>(read_stream, endian);
@@ -3303,56 +3315,42 @@ public:
             } partial;
         } b;
 
-        read_stream >> b.complete;
+        read_stream.read((char*)&b.complete, 1);
         switch (b.partial.len_flag) {
         case 0:
             return b.partial.len;
         case 1: {
             uint16_t full = b.partial.len;
             full <<= 8;
-            uint8_t additional;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             return ENBT::ConvertEndian(std::endian::little, full);
         }
         case 2: {
             uint32_t full = b.partial.len;
             full <<= 24;
-            uint8_t additional;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 16;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 8;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             return ENBT::ConvertEndian(std::endian::little, full);
         }
         case 3: {
             uint64_t full = b.partial.len;
             full <<= 56;
-            uint8_t additional;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 48;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 40;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 24;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 24;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 16;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             full <<= 8;
-            read_stream >> additional;
-            full |= additional;
+            full |= _read_as_<uint8_t>(read_stream);
             return ENBT::ConvertEndian(std::endian::little, full);
         }
         default:
@@ -3385,12 +3383,11 @@ public:
         std::vector<ENBT> result(len);
         if (a_tid == ENBT::Type::bit) {
             int8_t i = 0;
-            uint8_t value = 0;
-            read_stream >> value;
+            uint8_t value = _read_as_<uint8_t>(read_stream);
             for (auto& it : result) {
                 if (i >= 8) {
                     i = 0;
-                    read_stream >> value;
+                    value = _read_as_<uint8_t>(read_stream);
                 }
                 bool set = (bool)(value << i);
                 it = set;
@@ -3803,9 +3800,7 @@ public:
                     IndexStaticArray(read_stream, index, len, targetId);
                     if (targetId.type == ENBT::Type::bit) {
                         is_bit_value = true;
-                        uint8_t clear_value;
-                        read_stream >> clear_value;
-                        bit_value = clear_value << index % 8;
+                        bit_value = _read_as_<uint8_t>(read_stream) << index % 8;
                     }
                     continue;
                 }
