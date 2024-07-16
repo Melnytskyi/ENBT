@@ -499,36 +499,6 @@ public:
         data = (uint8_t*)res;
     }
 
-    ENBT(const enbt::compound& compound);
-    ENBT(enbt::compound&& compound);
-    ENBT(const enbt::fixed_array& fixed_array);
-    ENBT(enbt::fixed_array&& fixed_array);
-    ENBT(const enbt::dynamic_array& dynamic_array);
-    ENBT(enbt::dynamic_array&& dynamic_array);
-    ENBT(const enbt::simple_array_ui8& simple_array_ui8);
-    ENBT(enbt::simple_array_ui8&& simple_array_ui8);
-    ENBT(const enbt::simple_array_ui16& simple_array_ui16);
-    ENBT(enbt::simple_array_ui16&& simple_array_ui16);
-    ENBT(const enbt::simple_array_ui32& simple_array_ui32);
-    ENBT(enbt::simple_array_ui32&& simple_array_ui32);
-    ENBT(const enbt::simple_array_ui64& simple_array_ui64);
-    ENBT(enbt::simple_array_ui64&& simple_array_ui64);
-    ENBT(const enbt::simple_array_i8& simple_array_i8);
-    ENBT(enbt::simple_array_i8&& simple_array_i8);
-    ENBT(const enbt::simple_array_i16& simple_array_i16);
-    ENBT(enbt::simple_array_i16&& simple_array_i16);
-    ENBT(const enbt::simple_array_i32& simple_array_i32);
-    ENBT(enbt::simple_array_i32&& simple_array_i32);
-    ENBT(const enbt::simple_array_i64& simple_array_i64);
-    ENBT(enbt::simple_array_i64&& simple_array_i64);
-    ENBT(const enbt::bit& bit);
-    ENBT(enbt::bit&& bit);
-    ENBT(const enbt::optional& optional);
-    ENBT(enbt::optional&& optional);
-    ENBT(const enbt::uuid& uuid);
-    ENBT(enbt::uuid&& uuid);
-
-
     template <class T = ENBT>
     ENBT(const std::vector<ENBT>& array) {
         bool as_array = true;
@@ -3076,13 +3046,12 @@ public:
         WriteDefineLen(write_stream, len, val.type_id());
         if (len) {
             ENBT::Type_ID tid = (*result)[0].type_id();
+            WriteTypeID(write_stream, tid);
             if (tid.type != ENBT::Type::bit) {
-                WriteTypeID(write_stream, tid);
                 for (const auto& it : *result)
                     WriteValue(write_stream, it);
             } else {
                 tid.is_signed = false;
-                WriteTypeID(write_stream, tid);
                 int8_t i = 0;
                 uint8_t value = 0;
                 for (auto& it : *result) {
@@ -3379,6 +3348,8 @@ public:
 
     static std::vector<ENBT> ReadArray(std::istream& read_stream, ENBT::Type_ID tid) {
         size_t len = ReadDefineLen(read_stream, tid);
+        if (!len)
+            return {};
         ENBT::Type_ID a_tid = ReadTypeID(read_stream);
         std::vector<ENBT> result(len);
         if (a_tid == ENBT::Type::bit) {
@@ -3580,11 +3551,13 @@ public:
     }
 
     static void SkipArray(std::istream& read_stream, ENBT::Type_ID tid) {
-        ;
         uint64_t len = ReadDefineLen64(read_stream, tid);
-        if (int index_multiplier = CanFastIndex(ReadTypeID(read_stream)); !index_multiplier)
+        if (!len)
+            return;
+        auto items_tid = ReadTypeID(read_stream);
+        if (int index_multiplier = CanFastIndex(items_tid); !index_multiplier)
             for (uint64_t i = 0; i < len; i++)
-                SkipToken(read_stream);
+                SkipValue(read_stream, items_tid);
         else {
             if (tid == ENBT::Type::bit) {
                 uint64_t actual_len = len / 8;
@@ -3728,6 +3701,8 @@ public:
         switch (arr_tid.type) {
         case ENBT::Type::array: {
             uint64_t len = ReadDefineLen64(read_stream, arr_tid);
+            if (!len)
+                throw EnbtException("This array is empty");
             auto targetId = ReadTypeID(read_stream);
             IndexStaticArray(read_stream, index, len, targetId);
             break;
