@@ -447,6 +447,11 @@ public:
         return ENBT(std::unordered_map<std::string, ENBT>());
     }
 
+    static ENBT compound(std::unordered_map<std::string, ENBT>&& val) {
+        return ENBT(std::move(val));
+    }
+
+
     static ENBT dynamic_array() {
         return ENBT(std::vector<ENBT>(), Type::darray);
     }
@@ -2391,6 +2396,22 @@ namespace enbt {
             holder = std::move(move.holder);
             proxy = std::get<std::unordered_map<std::string, ENBT>*>(holder.content());
         }
+
+        compound(std::unordered_map<std::string, ENBT>&& init)
+            : holder(init) {
+            proxy = std::get<std::unordered_map<std::string, ENBT>*>(holder.content());
+        }
+
+        compound(const std::unordered_map<std::string, ENBT>& init)
+            : holder(init) {
+            proxy = std::get<std::unordered_map<std::string, ENBT>*>(holder.content());
+        }
+
+        compound(std::initializer_list<std::pair<const std::string, ENBT>> init)
+            : holder(std::unordered_map<std::string, ENBT>(init)) {
+            proxy = std::get<std::unordered_map<std::string, ENBT>*>(holder.content());
+        }
+
 
         compound& operator=(const ENBT& copy) {
             if (!copy.is_compound())
