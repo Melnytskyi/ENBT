@@ -456,6 +456,14 @@ public:
         return ENBT(std::vector<ENBT>(), Type::darray);
     }
 
+    static ENBT dynamic_array(const std::vector<ENBT>& arr) {
+        return ENBT(arr, Type::darray);
+    }
+
+    static ENBT dynamic_array(std::vector<ENBT>&& arr) {
+        return ENBT(std::move(arr), Type::darray);
+    }
+
     static ENBT fixed_array(size_t size) {
         return ENBT(std::vector<ENBT>(size), Type::array);
     }
@@ -1930,6 +1938,13 @@ namespace enbt {
 
     public:
         static dynamic_array_ref make_ref(ENBT& enbt) {
+            if (enbt.getType() == ENBT::Type::array)
+                return dynamic_array_ref(enbt);
+            else
+                throw EnbtException("ENBT is not a dynamic array");
+        }
+
+        static const dynamic_array_ref make_ref(const ENBT& enbt) {
             if (enbt.getType() == ENBT::Type::array)
                 return dynamic_array_ref(enbt);
             else
