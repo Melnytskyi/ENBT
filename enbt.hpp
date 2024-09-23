@@ -1,6 +1,7 @@
 #pragma once
 #ifndef SRC_LIBRARY_ENBT_ENBT
     #define SRC_LIBRARY_ENBT_ENBT
+    #include <algorithm>
     #include <any>
     #include <bit>
     #include <cstdint>
@@ -8,7 +9,6 @@
     #include <initializer_list>
     #include <istream>
     #include <optional>
-    #include <sstream>
     #include <string>
     #include <unordered_map>
     #include <variant>
@@ -20,12 +20,8 @@
 namespace enbt {
     namespace endian_helpers {
         inline void endian_swap(void* value_ptr, std::size_t len) {
-            std::vector<char> tmp(len);
-            char* prox = (char*)value_ptr;
-            for (std::int64_t i = len - 1, j = 0; i >= 0; i--)
-                tmp[i] = prox[j++];
-            for (std::size_t i = 0; i < len; i++)
-                prox[i] = tmp[i];
+            std::byte* prox = static_cast<std::byte*>(value_ptr);
+            std::reverse(prox, prox + len);
         }
 
         inline void convert_endian(std::endian value_endian, void* value_ptr, std::size_t len) {
@@ -317,7 +313,7 @@ namespace enbt {
             std::unordered_map<std::string, value>*, //source pointer,
             enbt::raw_uuid,
             value*,
-            nullptr_t>
+            std::nullptr_t>
             value_variants;
 
         template <class T>
@@ -490,7 +486,17 @@ namespace enbt {
                 return enbt::type_len::Tiny;
         }
 
+
+        value(std::uint8_t* data, std::size_t data_len, type_id data_type_id)
+            : data(data), data_len(data_len), data_type_id(data_type_id) {}
+
     public:
+
+        static inline value build_inline(std::uint8_t* data, std::size_t data_len, type_id data_type_id) {
+            return value(data, data_len, data_type_id);
+        }
+
+
         template <class T>
         value(const std::vector<T>& array) {
             data_len = array.size();
@@ -591,6 +597,49 @@ namespace enbt {
         value(bool optional, const value& value);
         value(value&& copy) noexcept;
 
+
+        value(const compound& copy);
+        value(compound&& copy) noexcept;
+
+        value(const fixed_array& copy);
+        value(fixed_array&& copy) noexcept;
+
+        value(const dynamic_array& copy);
+        value(dynamic_array&& copy) noexcept;
+
+        value(const simple_array_ui8& copy);
+        value(simple_array_ui8&& copy) noexcept;
+
+        value(const simple_array_ui16& copy);
+        value(simple_array_ui16&& copy) noexcept;
+
+        value(const simple_array_ui32& copy);
+        value(simple_array_ui32&& copy) noexcept;
+
+        value(const simple_array_ui64& copy);
+        value(simple_array_ui64&& copy) noexcept;
+
+        value(const simple_array_i8& copy);
+        value(simple_array_i8&& copy) noexcept;
+
+        value(const simple_array_i16& copy);
+        value(simple_array_i16&& copy) noexcept;
+
+        value(const simple_array_i32& copy);
+        value(simple_array_i32&& copy) noexcept;
+
+        value(const simple_array_i64& copy);
+        value(simple_array_i64&& copy) noexcept;
+
+        value(const bit& copy);
+        value(bit&& copy) noexcept;
+
+        value(const optional& copy);
+        value(optional&& copy) noexcept;
+
+        value(const uuid& copy);
+        value(uuid&& copy) noexcept;
+
         ~value() {
             free_data(data, data_type_id, data_len);
         }
@@ -612,59 +661,49 @@ namespace enbt {
             return *this;
         }
 
+        value& operator=(uint8_t set_value);
+        value& operator=(int8_t set_value);
+        value& operator=(uint16_t set_value);
+        value& operator=(int16_t set_value);
+        value& operator=(uint32_t set_value);
+        value& operator=(int32_t set_value);
+        value& operator=(uint64_t set_value);
+        value& operator=(int64_t set_value);
+        value& operator=(float set_value);
+        value& operator=(double set_value);
+        value& operator=(bool set_value);
+        value& operator=(raw_uuid set_value);
+
+        template <class Ty>
+        value& operator=(const Ty& set_value) {
+            using T = std::remove_cvref_t<Ty>;
+            if constexpr (std::is_same<T, value_variants>().value)
+                operator=(value(set_value, data_type_id, data_len, data_type_id.endian));
+            else if constexpr (is_optional<T>::value) {
+                if (set_value.has_value())
+                    operator=(value(true, *set_value));
+                else
+                    operator=(value(false, value{}));
+            } else
+                operator=(value(set_value));
+            return *this;
+        }
+
         template <class Ty>
         value& operator=(Ty&& set_value) {
             using T = std::remove_cvref_t<Ty>;
-            if constexpr (std::is_same<T, std::uint8_t>().value || std::is_same<T, int8_t>().value || std::is_same<T, std::uint16_t>().value || std::is_same<T, int16_t>().value || std::is_same<T, std::uint32_t>().value || std::is_same<T, int32_t>().value || std::is_same<T, std::uint64_t>().value || std::is_same<T, int64_t>().value || std::is_same<T, float>().value || std::is_same<T, double>().value) {
-                if (data_type_id.type == enbt::type::integer || data_type_id.type == enbt::type::var_integer || data_type_id.type == enbt::type::comp_integer) {
-                    switch (data_type_id.length) {
-                    case enbt::type_len::Tiny:
-                        set_data((std::uint8_t)set_value);
-                        break;
-                    case enbt::type_len::Short:
-                        set_data((std::uint16_t)set_value);
-                        break;
-                    case enbt::type_len::Default:
-                        set_data((std::uint32_t)set_value);
-                        break;
-                    case enbt::type_len::Long:
-                        set_data((std::uint64_t)set_value);
-                        break;
-                    default:
-                        break;
-                    }
-                } else if (data_type_id.type == enbt::type::floating) {
-                    switch (data_type_id.length) {
-                    case enbt::type_len::Default:
-                        set_data((float)set_value);
-                        break;
-                    case enbt::type_len::Long:
-                        set_data((double)set_value);
-                        break;
-                    default:
-                        throw enbt::exception("Not implemented");
-                    }
-                } else
-                    operator=(value(set_value));
-            } else if constexpr (std::is_same<T, enbt::raw_uuid>().value)
-                set_data(set_value);
-            else if constexpr (std::is_same<T, value_variants>().value)
+            if constexpr (std::is_same<T, value_variants>().value)
                 operator=(value(set_value, data_type_id, data_len, data_type_id.endian));
-            else if constexpr (std::is_same<T, bool>().value) {
-                if (data_type_id.type == enbt::type::bit)
-                    data_type_id.is_signed = set_value;
-                else
-                    operator=(value(set_value));
-            } else if constexpr (is_optional<std::remove_cvref_t<T>>::value) {
+            else if constexpr (is_optional<T>::value) {
                 if (set_value.has_value())
-                    operator=(optional(*set_value));
+                    operator=(value(true, *set_value));
                 else
-                    operator=(optional());
+                    operator=(value(false, value{}));
             } else
                 operator=(value(std::forward<Ty>(set_value)));
-
             return *this;
         }
+
 
         bool type_equal(type_id tid) const {
             return !(data_type_id != tid);
@@ -1139,6 +1178,8 @@ namespace enbt {
                 case enbt::type::compound:
                     (*(std::unordered_map<std::string, value>::iterator*)pointer)++;
                     break;
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return *this;
             }
@@ -1160,6 +1201,8 @@ namespace enbt {
                 case enbt::type::compound:
                     (*(std::unordered_map<std::string, value>::iterator*)pointer)--;
                     break;
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return *this;
             }
@@ -1179,6 +1222,8 @@ namespace enbt {
                     return (*(std::vector<value>::iterator*)pointer) == (*(std::vector<value>::iterator*)pointer);
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) == (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return false;
             }
@@ -1192,7 +1237,8 @@ namespace enbt {
                     return (*(std::vector<value>::iterator*)pointer) != (*(std::vector<value>::iterator*)pointer);
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) != (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
-                    break;
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return true;
             }
@@ -1211,8 +1257,9 @@ namespace enbt {
                         tmp->second
                     );
                 }
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
-                throw enbt::exception("Unreachable exception in non debug environment");
             }
         };
 
@@ -1271,8 +1318,9 @@ namespace enbt {
                         tmp->second
                     );
                 }
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
-                throw enbt::exception("Unreachable exception in non debug environemnt");
             }
         };
 
@@ -1372,6 +1420,8 @@ namespace enbt {
                 case enbt::type::compound:
                     (*(std::unordered_map<std::string, value>::iterator*)pointer)++;
                     break;
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return *this;
             }
@@ -1409,6 +1459,8 @@ namespace enbt {
                 case enbt::type::compound:
                     (*(std::unordered_map<std::string, value>::iterator*)pointer)--;
                     break;
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return *this;
             }
@@ -1431,6 +1483,8 @@ namespace enbt {
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) == (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
                     break;
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return false;
             }
@@ -1447,6 +1501,8 @@ namespace enbt {
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) != (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
                     break;
+                default:
+                    throw enbt::exception("Unreachable exception in non debug environment");
                 }
                 return false;
             }
@@ -1884,12 +1940,33 @@ namespace enbt {
             value to_set(std::forward<T>(_value));
 
 
-            if (index != 0 || fixed_type.type != enbt::type::none) {
+            if (index != 0 && fixed_type.type != enbt::type::none) {
                 if (to_set.type_id() != fixed_type)
                     throw enbt::exception("Invalid set value, set value must be same as every item in fixed array");
             }
             fixed_type = to_set.type_id();
             (*proxy)[index] = std::move(to_set);
+        }
+
+        template <class T>
+        void push_back(T&& _value) {
+            if (as_const)
+                throw enbt::exception("This array is constant");
+            value to_set(std::forward<T>(_value));
+
+
+            if ((*proxy).size() != 0 && fixed_type.type != enbt::type::none) {
+                if (to_set.type_id() != fixed_type)
+                    throw enbt::exception("Invalid set value, set value must be same as every item in fixed array");
+            }
+            fixed_type = to_set.type_id();
+            (*proxy).push_back(std::move(to_set));
+        }
+
+        void pop_back() {
+            if (as_const)
+                throw enbt::exception("This array is constant");
+            (*proxy).pop_back();
         }
 
         const value& operator[](std::size_t index) const {
@@ -2179,11 +2256,11 @@ namespace enbt {
         std::size_t size_;
 
         static constexpr enbt::type_len type_len = []() constexpr {
-            if (sizeof(T) < UINT8_MAX)
+            if (sizeof(T) == 1)
                 return enbt::type_len::Tiny;
-            else if (sizeof(T) < UINT16_MAX)
+            else if (sizeof(T) == 2)
                 return enbt::type_len::Short;
-            else if (sizeof(T) < UINT32_MAX)
+            else if (sizeof(T) == 4)
                 return enbt::type_len::Default;
             else
                 return enbt::type_len::Long;
@@ -2284,11 +2361,11 @@ namespace enbt {
         std::size_t size_;
 
         static constexpr enbt::type_len type_len = []() constexpr {
-            if (sizeof(T) < UINT8_MAX)
+            if (sizeof(T) == 1)
                 return enbt::type_len::Tiny;
-            else if (sizeof(T) < UINT16_MAX)
+            else if (sizeof(T) == 2)
                 return enbt::type_len::Short;
-            else if (sizeof(T) < UINT32_MAX)
+            else if (sizeof(T) == 4)
                 return enbt::type_len::Default;
             else
                 return enbt::type_len::Long;
@@ -2297,6 +2374,11 @@ namespace enbt {
         simple_array_ref(value& abstract) {
             proxy = std::get<T*>(abstract.content());
             size_ = abstract.size();
+        }
+
+        simple_array_ref() {
+            proxy = nullptr;
+            size_++;
         }
 
     public:
@@ -2476,15 +2558,15 @@ namespace enbt {
             return holder != tag.holder;
         }
 
-        operator value&() & {
+        explicit operator value&() & {
             return holder;
         }
 
-        operator const value&() const& {
+        explicit operator const value&() const& {
             return holder;
         }
 
-        operator value&&() && {
+        explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -2499,6 +2581,11 @@ namespace enbt {
             std::size_t i = 0;
             for (auto& item : list)
                 (*proxy)[i++] = item;
+        }
+
+        fixed_array()
+            : holder(std::vector<value>(), enbt::type::array) {
+            proxy = std::get<std::vector<value>*>(holder.content());
         }
 
         fixed_array(std::size_t array_size)
@@ -2536,15 +2623,15 @@ namespace enbt {
             return holder != tag.holder;
         }
 
-        operator value&() & {
+        explicit operator value&() & {
             return holder;
         }
 
-        operator const value&() const& {
+        explicit operator const value&() const& {
             return holder;
         }
 
-        operator value&&() && {
+        explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -2631,15 +2718,15 @@ namespace enbt {
             return holder != tag.holder;
         }
 
-        operator value&() & {
+        explicit operator value&() & {
             return holder;
         }
 
-        operator const value&() const& {
+        explicit operator const value&() const& {
             return holder;
         }
 
-        operator value&&() && {
+        explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -2668,23 +2755,35 @@ namespace enbt {
         }
 
         simple_array(std::size_t array_size)
-            : simple_array_ref<T>(holder), holder(enbt::type_id(enbt::type::sarray, simple_array_ref<T>::type_len, std::is_signed_v<T>), array_size) {}
+            : holder(enbt::type_id(enbt::type::sarray, simple_array_ref<T>::type_len, std::is_signed_v<T>), array_size) {
+            simple_array_ref<T>::proxy = std::get<T*>(holder.content());
+            simple_array_ref<T>::size_ = holder.size();
+        }
 
         simple_array(const simple_array& copy)
-            : simple_array_ref<T>(holder), holder(copy.holder) {}
+            : holder(copy.holder) {
+            simple_array_ref<T>::proxy = std::get<T*>(holder.content());
+            simple_array_ref<T>::size_ = holder.size();
+        }
 
         simple_array(simple_array&& move)
-            : simple_array_ref<T>(holder), holder(std::move(move.holder)) {}
+            : holder(std::move(move.holder)) {
+            simple_array_ref<T>::proxy = std::get<T*>(holder.content());
+            simple_array_ref<T>::size_ = holder.size();
+        }
 
         simple_array& operator=(const simple_array& copy) {
             holder = copy.holder;
             simple_array_ref<T>::proxy = std::get<T*>(holder.content());
+            simple_array_ref<T>::size_ = holder.size();
+
             return *this;
         }
 
         simple_array& operator=(simple_array&& move) {
             holder = std::move(move.holder);
             simple_array_ref<T>::proxy = std::get<T*>(holder.content());
+            simple_array_ref<T>::size_ = holder.size();
             return *this;
         }
 
@@ -2696,15 +2795,15 @@ namespace enbt {
             return holder != tag.holder;
         }
 
-        operator value&() & {
+        explicit operator value&() & {
             return holder;
         }
 
-        operator const value&() const& {
+        explicit operator const value&() const& {
             return holder;
         }
 
-        operator value&&() && {
+        explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -2770,15 +2869,15 @@ namespace enbt {
             return holder;
         }
 
-        operator value&() & {
+        explicit operator value&() & {
             return holder;
         }
 
-        operator const value&() const& {
+        explicit operator const value&() const& {
             return holder;
         }
 
-        operator value&&() && {
+        explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -2853,15 +2952,15 @@ namespace enbt {
             return *this;
         }
 
-        operator value&() & {
+        explicit operator value&() & {
             return holder;
         }
 
-        operator const value&() const& {
+        explicit operator const value&() const& {
             return holder;
         }
 
-        operator value&&() && {
+        explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -2905,26 +3004,85 @@ namespace enbt {
             return *this;
         }
 
-        operator enbt::raw_uuid() {
+        operator enbt::raw_uuid() const {
             return std::get<enbt::raw_uuid>(holder.content());
         }
 
-        operator const enbt::raw_uuid&() const {
+        explicit operator value&() & {
             return holder;
         }
 
-        operator value&() & {
+        explicit operator const value&() const& {
             return holder;
         }
 
-        operator const value&() const& {
-            return holder;
-        }
-
-        operator value&&() && {
+        explicit operator value&&() && {
             return std::move(holder);
         }
     };
+
+    namespace io_helper {
+        void write_compress_len(std::ostream& write_stream, std::uint64_t len);
+        void write_type_id(std::ostream& write_stream, enbt::type_id tid);
+        void write_string(std::ostream& write_stream, const value& val);
+        void write_define_len(std::ostream& write_stream, std::uint64_t len, enbt::type_id tid);
+        void initialize_version(std::ostream& write_stream);
+        void write_compound(std::ostream& write_stream, const value& val);
+        void write_array(std::ostream& write_stream, const value& val);
+        void write_darray(std::ostream& write_stream, const value& val);
+        void write_simple_array(std::ostream& write_stream, const value& val);
+        void write_log_item(std::ostream& write_stream, const value& val);
+        void write_value(std::ostream& write_stream, const value& val);
+        void write_token(std::ostream& write_stream, const value& val);
+
+
+        enbt::type_id read_type_id(std::istream& read_stream);
+        std::size_t read_define_len(std::istream& read_stream, enbt::type_id tid);
+        std::uint64_t read_define_len64(std::istream& read_stream, enbt::type_id tid);
+        std::uint64_t read_compress_len(std::istream& read_stream);
+
+        std::string read_string(std::istream& read_stream);
+        value read_compound(std::istream& read_stream, enbt::type_id tid);
+        std::vector<value> read_array(std::istream& read_stream, enbt::type_id tid);
+        std::vector<value> read_darray(std::istream& read_stream, enbt::type_id tid);
+        value read_sarray(std::istream& read_stream, enbt::type_id tid);
+        value read_log_item(std::istream& read_stream);
+        value read_value(std::istream& read_stream, enbt::type_id tid);
+        value read_token(std::istream& read_stream);
+
+        value read_file(std::istream& read_stream);
+        std::vector<value> read_list_file(std::istream& read_stream);
+
+        void check_version(std::istream& read_stream);
+
+
+        //return zero if cannot, else return type size
+        std::uint8_t can_fast_index(enbt::type_id tid);
+
+        void skip_compound(std::istream& read_stream, enbt::type_id tid);
+        void skip_array(std::istream& read_stream, enbt::type_id tid);
+        void skip_darray(std::istream& read_stream, enbt::type_id tid);
+        void skip_sarray(std::istream& read_stream, enbt::type_id tid);
+        void skip_string(std::istream& read_stream);
+        void skip_log_item(std::istream& read_stream);
+        void skip_value(std::istream& read_stream, enbt::type_id tid);
+        void skip_token(std::istream& read_stream);
+
+
+        //move read stream cursor to value in compound, return true if value found
+        bool find_value_compound(std::istream& read_stream, enbt::type_id tid, const std::string& key);
+        void index_static_array(std::istream& read_stream, std::uint64_t index, std::uint64_t len, enbt::type_id target_id);
+        void index_dyn_array(std::istream& read_stream, std::uint64_t index, std::uint64_t len);
+        void index_array(std::istream& read_stream, std::uint64_t index, enbt::type_id arr_tid);
+        void index_array(std::istream& read_stream, std::uint64_t index);
+
+        //move read_stream cursor to value,
+        //value_path similar: "0/the test/4/54",
+        //return success status
+        //can throw enbt::exception
+        bool move_to_value_path(std::istream& read_stream, const std::string& value_path);
+        value get_value_path(std::istream& read_stream, const std::string& value_path);
+    }
 }
 
 namespace std {
@@ -2938,985 +3096,6 @@ namespace std {
         }
     };
 }
-
-namespace enbt {
-
-    class ENBTHelper {
-        template <class T>
-        static T _read_as_(std::istream& input_stream) {
-            T res;
-            input_stream.read((char*)&res, sizeof(T));
-            return res;
-        }
-
-    public:
-        static void WriteCompressLen(std::ostream& write_stream, std::uint64_t len) {
-            union {
-                std::uint64_t full = 0;
-                std::uint8_t part[8];
-
-            } b;
-
-            b.full = endian_helpers::convert_endian(std::endian::big, len);
-
-            constexpr struct {
-                std::uint64_t b64 : 62 = -1;
-                std::uint64_t b32 : 30 = -1;
-                std::uint64_t b16 : 14 = -1;
-                std::uint64_t b8 : 6 = -1;
-            } m;
-
-            if (len <= m.b8) {
-                write_stream << b.part[7];
-            } else if (len <= m.b16) {
-                b.part[0] |= 1;
-                write_stream << b.part[7];
-                write_stream << b.part[6];
-            } else if (len <= m.b32) {
-                b.part[0] |= 2;
-                write_stream << b.part[7];
-                write_stream << b.part[6];
-                write_stream << b.part[5];
-                write_stream << b.part[4];
-            } else if (len <= m.b64) {
-                b.part[0] |= 3;
-                write_stream << b.part[7];
-                write_stream << b.part[6];
-                write_stream << b.part[5];
-                write_stream << b.part[4];
-                write_stream << b.part[3];
-                write_stream << b.part[2];
-                write_stream << b.part[1];
-                write_stream << b.part[0];
-            } else
-                throw std::overflow_error("uint64_t Cannot put in to uint60_t");
-        }
-
-        template <class T>
-        static void WriteVar(std::ostream& write_stream, T value, std::endian endian = std::endian::native) {
-            static constexpr size_t sign_bit_offset = sizeof(T) * 8 - 1;
-            static constexpr T least_bits = ~T(0x7F);
-
-            value = endian_helpers::convert_endian(endian, value);
-            if constexpr (std::is_signed_v<T>)
-                value = ((value) << 1) ^ ((value) >> sign_bit_offset);
-            while (value & least_bits) {
-                write_stream << (uint8_t(value) | 0x80);
-                value >>= 7;
-            }
-            write_stream << uint8_t(value);
-        }
-
-        template <class T>
-        static void WriteVar(std::ostream& write_stream, value::value_variants value, std::endian endian = std::endian::native) {
-            WriteVar(write_stream, std::get<T>(value), endian);
-        }
-
-        static void WriteTypeID(std::ostream& write_stream, enbt::type_id tid) {
-            write_stream << tid.raw;
-        }
-
-        template <class T>
-        static void WriteValue(std::ostream& write_stream, T value, std::endian endian = std::endian::native) {
-            if constexpr (std::is_same<T, enbt::raw_uuid>())
-                endian_helpers::convert_endian(endian, value.data, 16);
-            else
-                value = endian_helpers::convert_endian(endian, value);
-            std::uint8_t* proxy = (std::uint8_t*)&value;
-            for (std::size_t i = 0; i < sizeof(T); i++)
-                write_stream << proxy[i];
-        }
-
-        template <class T>
-        static void WriteValue(std::ostream& write_stream, value::value_variants value, std::endian endian = std::endian::native) {
-            return WriteValue(write_stream, std::get<T>(value), endian);
-        }
-
-        template <class T>
-        static void WriteArray(std::ostream& write_stream, T* values, std::size_t len, std::endian endian = std::endian::native) {
-            if constexpr (sizeof(T) == 1) {
-                for (std::size_t i = 0; i < len; i++)
-                    write_stream << values[i];
-            } else {
-                for (std::size_t i = 0; i < len; i++)
-                    WriteValue(write_stream, values[i], endian);
-            }
-        }
-
-        template <class T>
-        static void WriteArray(std::ostream& write_stream, value::value_variants* values, std::size_t len, std::endian endian = std::endian::native) {
-            T* arr = new T[len];
-            for (std::size_t i = 0; i < len; i++)
-                arr[i] = std::get<T>(values[i]);
-            WriteArray(write_stream, arr, len, endian);
-            delete[] arr;
-        }
-
-        static void WriteString(std::ostream& write_stream, const value& val) {
-            const std::string& str_ref = (const std::string&)val;
-            std::size_t real_size = str_ref.size();
-            std::size_t size_without_null = real_size ? (str_ref[real_size - 1] != 0 ? real_size : real_size - 1) : 0;
-            WriteCompressLen(write_stream, size_without_null);
-            WriteArray(write_stream, str_ref.data(), size_without_null);
-        }
-
-        template <class T>
-        static void WriteDefineLen(std::ostream& write_stream, T value) {
-            return WriteValue(write_stream, value, std::endian::little);
-        }
-
-        static void WriteDefineLen(std::ostream& write_stream, std::uint64_t len, enbt::type_id tid) {
-            switch (tid.length) {
-            case enbt::type_len::Tiny:
-                if (len != ((std::uint8_t)len))
-                    throw enbt::exception("Cannot convert value to std::uint8_t");
-                WriteDefineLen(write_stream, (std::uint8_t)len);
-                break;
-            case enbt::type_len::Short:
-                if (len != ((std::uint16_t)len))
-                    throw enbt::exception("Cannot convert value to std::uint16_t");
-                WriteDefineLen(write_stream, (std::uint16_t)len);
-                break;
-            case enbt::type_len::Default:
-                if (len != ((std::uint32_t)len))
-                    throw enbt::exception("Cannot convert value to std::uint32_t");
-                WriteDefineLen(write_stream, (std::uint32_t)len);
-                break;
-            case enbt::type_len::Long:
-                return WriteDefineLen(write_stream, (std::uint64_t)len);
-                break;
-            }
-        }
-
-        static void InitializeVersion(std::ostream& write_stream) {
-            write_stream << (char)ENBT_VERSION_HEX;
-        }
-
-        static void WriteCompound(std::ostream& write_stream, const value& val) {
-            auto result = std::get<std::unordered_map<std::string, value>*>(val.content());
-            WriteDefineLen(write_stream, result->size(), val.type_id());
-            for (auto& it : *result) {
-                WriteString(write_stream, it.first);
-                WriteToken(write_stream, it.second);
-            }
-        }
-
-        static void WriteArray(std::ostream& write_stream, const value& val) {
-            if (!val.is_array())
-                throw enbt::exception("This is not array for serialize it");
-            auto result = (std::vector<value>*)val.get_internal_ptr();
-            std::size_t len = result->size();
-            WriteDefineLen(write_stream, len, val.type_id());
-            if (len) {
-                enbt::type_id tid = (*result)[0].type_id();
-                WriteTypeID(write_stream, tid);
-                if (tid.type != enbt::type::bit) {
-                    for (const auto& it : *result)
-                        WriteValue(write_stream, it);
-                } else {
-                    tid.is_signed = false;
-                    std::int8_t i = 0;
-                    std::uint8_t value = 0;
-                    for (auto& it : *result) {
-                        if (i >= 8) {
-                            i = 0;
-                            write_stream << value;
-                        }
-                        if (i)
-                            value = (((bool)it) << i);
-                        else
-                            value = (bool)it;
-                    }
-                    if (i)
-                        write_stream << value;
-                }
-            }
-        }
-
-        static void WriteDArray(std::ostream& write_stream, const value& val) {
-            if (!val.is_array())
-                throw enbt::exception("This is not array for serialize it");
-            auto result = (std::vector<value>*)val.get_internal_ptr();
-            WriteDefineLen(write_stream, result->size(), val.type_id());
-            for (auto& it : *result)
-                WriteToken(write_stream, it);
-        }
-
-        static void WriteSimpleArray(std::ostream& write_stream, const value& val) {
-            WriteCompressLen(write_stream, val.size());
-            switch (val.type_id().length) {
-            case enbt::type_len::Tiny:
-                if (val.type_id().is_signed)
-                    WriteArray(write_stream, val.get_internal_ptr(), val.size(), val.type_id().get_endian());
-                else
-                    WriteArray(write_stream, val.get_internal_ptr(), val.size());
-                break;
-            case enbt::type_len::Short:
-                if (val.type_id().is_signed)
-                    WriteArray(write_stream, (std::uint16_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
-                else
-                    WriteArray(write_stream, (std::uint16_t*)val.get_internal_ptr(), val.size());
-                break;
-            case enbt::type_len::Default:
-                if (val.type_id().is_signed)
-                    WriteArray(write_stream, (std::uint32_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
-                else
-                    WriteArray(write_stream, (std::uint32_t*)val.get_internal_ptr(), val.size());
-                break;
-            case enbt::type_len::Long:
-                if (val.type_id().is_signed)
-                    WriteArray(write_stream, (std::uint64_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
-                else
-                    WriteArray(write_stream, (std::uint64_t*)val.get_internal_ptr(), val.size());
-                break;
-            default:
-                break;
-            }
-        }
-
-        static void WriteValue(std::ostream& write_stream, const value& val) {
-            enbt::type_id tid = val.type_id();
-            switch (tid.type) {
-            case enbt::type::integer:
-                switch (tid.length) {
-                case enbt::type_len::Tiny:
-                    if (tid.is_signed)
-                        return WriteValue<std::int8_t>(write_stream, val.content(), tid.get_endian());
-                    else
-                        return WriteValue<std::uint8_t>(write_stream, val.content(), tid.get_endian());
-                case enbt::type_len::Short:
-                    if (tid.is_signed)
-                        return WriteValue<std::int16_t>(write_stream, val.content(), tid.get_endian());
-                    else
-                        return WriteValue<std::uint16_t>(write_stream, val.content(), tid.get_endian());
-                case enbt::type_len::Default:
-                    if (tid.is_signed)
-                        return WriteValue<std::int32_t>(write_stream, val.content(), tid.get_endian());
-                    else
-                        return WriteValue<std::uint32_t>(write_stream, val.content(), tid.get_endian());
-                case enbt::type_len::Long:
-                    if (tid.is_signed)
-                        return WriteValue<std::int64_t>(write_stream, val.content(), tid.get_endian());
-                    else
-                        return WriteValue<std::uint64_t>(write_stream, val.content(), tid.get_endian());
-                }
-                return;
-            case enbt::type::floating:
-                switch (tid.length) {
-                case enbt::type_len::Default:
-                    return WriteValue<float>(write_stream, val.content(), tid.get_endian());
-                case enbt::type_len::Long:
-                    return WriteValue<double>(write_stream, val.content(), tid.get_endian());
-                }
-                return;
-            case enbt::type::var_integer:
-                switch (tid.length) {
-                case enbt::type_len::Default:
-                    if (tid.is_signed)
-                        return WriteVar<std::int32_t>(write_stream, val.content(), tid.get_endian());
-                    else
-                        return WriteVar<std::uint32_t>(write_stream, val.content(), tid.get_endian());
-                case enbt::type_len::Long:
-                    if (tid.is_signed)
-                        return WriteVar<std::int64_t>(write_stream, val.content(), tid.get_endian());
-                    else
-                        return WriteVar<std::uint64_t>(write_stream, val.content(), tid.get_endian());
-                }
-                return;
-            case enbt::type::comp_integer:
-                return WriteCompressLen(write_stream, (uint64_t)val);
-            case enbt::type::uuid:
-                return WriteValue<enbt::raw_uuid>(write_stream, val.content(), tid.get_endian());
-            case enbt::type::sarray:
-                return WriteSimpleArray(write_stream, val);
-            case enbt::type::darray:
-                return WriteDArray(write_stream, val);
-            case enbt::type::compound:
-                return WriteCompound(write_stream, val);
-            case enbt::type::array:
-                return WriteArray(write_stream, val);
-            case enbt::type::optional:
-                if (val.contains())
-                    WriteToken(write_stream, *val.get_optional());
-                break;
-            case enbt::type::string:
-                return WriteString(write_stream, val);
-            }
-        }
-
-        static void WriteToken(std::ostream& write_stream, const value& val) {
-            write_stream << val.type_id().raw;
-            WriteValue(write_stream, val);
-        }
-
-        template <class T>
-        static T ReadVar(std::istream& read_stream, std::endian endian) {
-            constexpr size_t max_offset = (sizeof(T) / 5 * 5 + ((sizeof(T) % 5) > 0)) * 8;
-            std::make_unsigned_t<T> decodedInt = 0;
-            size_t bitOffset = 0;
-            char currentByte = 0;
-            do {
-                if (bitOffset == max_offset)
-                    throw enbt::exception("Var value too big");
-                currentByte = _read_as_<char>(read_stream);
-                decodedInt |= T(currentByte & 0b01111111) << bitOffset;
-                bitOffset += 7;
-            } while ((currentByte & 0b10000000) != 0);
-            if constexpr (std::is_signed_v<T>)
-                return endian_helpers::convert_endian(endian, (T)((decodedInt >> 1) ^ -(decodedInt & 1)));
-            else
-                return endian_helpers::convert_endian(endian, decodedInt);
-        }
-
-        static enbt::type_id ReadTypeID(std::istream& read_stream) {
-            enbt::type_id result;
-            result.raw = _read_as_<std::uint8_t>(read_stream);
-            return result;
-        }
-
-        template <class T>
-        static T ReadValue(std::istream& read_stream, std::endian endian = std::endian::native) {
-            T tmp;
-            if constexpr (std::is_same<T, enbt::raw_uuid>()) {
-                for (std::size_t i = 0; i < 16; i++)
-                    tmp.data[i] = _read_as_<std::uint8_t>(read_stream);
-                endian_helpers::convert_endian(endian, tmp.data, 16);
-            } else {
-                std::uint8_t* proxy = (std::uint8_t*)&tmp;
-                for (std::size_t i = 0; i < sizeof(T); i++)
-                    proxy[i] = _read_as_<std::uint8_t>(read_stream);
-                endian_helpers::convert_endian(endian, tmp);
-            }
-            return tmp;
-        }
-
-        template <class T>
-        static T* ReadArray(std::istream& read_stream, std::size_t len, std::endian endian = std::endian::native) {
-            T* tmp = new T[len];
-            if constexpr (sizeof(T) == 1) {
-                for (std::size_t i = 0; i < len; i++)
-                    tmp[i] = _read_as_<std::uint8_t>(read_stream);
-            } else {
-                for (std::size_t i = 0; i < len; i++)
-                    tmp[i] = ReadValue<T>(read_stream, endian);
-            }
-            return tmp;
-        }
-
-        template <class T>
-        static T ReadDefineLen(std::istream& read_stream) {
-            return ReadValue<T>(read_stream, std::endian::little);
-        }
-
-        static std::size_t ReadDefineLen(std::istream& read_stream, enbt::type_id tid) {
-            switch (tid.length) {
-            case enbt::type_len::Tiny:
-                return ReadDefineLen<std::uint8_t>(read_stream);
-            case enbt::type_len::Short:
-                return ReadDefineLen<std::uint16_t>(read_stream);
-            case enbt::type_len::Default:
-                return ReadDefineLen<std::uint32_t>(read_stream);
-            case enbt::type_len::Long: {
-                std::uint64_t val = ReadDefineLen<std::uint64_t>(read_stream);
-                if ((std::size_t)val != val)
-                    throw std::overflow_error("Array length too big for this platform");
-                return val;
-            }
-            default:
-                return 0;
-            }
-        }
-
-        static std::uint64_t ReadDefineLen64(std::istream& read_stream, enbt::type_id tid) {
-            switch (tid.length) {
-            case enbt::type_len::Tiny:
-                return ReadDefineLen<std::uint8_t>(read_stream);
-            case enbt::type_len::Short:
-                return ReadDefineLen<std::uint16_t>(read_stream);
-            case enbt::type_len::Default:
-                return ReadDefineLen<std::uint32_t>(read_stream);
-            case enbt::type_len::Long:
-                return ReadDefineLen<std::uint64_t>(read_stream);
-            default:
-                return 0;
-            }
-        }
-
-        static std::uint64_t ReadCompressLen(std::istream& read_stream) {
-            union {
-                std::uint8_t complete = 0;
-
-                struct {
-                    std::uint8_t len : 6;
-                    std::uint8_t len_flag : 2;
-                } partial;
-            } b;
-
-            read_stream.read((char*)&b.complete, 1);
-            switch (b.partial.len_flag) {
-            case 0:
-                return b.partial.len;
-            case 1: {
-                std::uint16_t full = b.partial.len;
-                full <<= 8;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                return endian_helpers::convert_endian(std::endian::little, full);
-            }
-            case 2: {
-                std::uint32_t full = b.partial.len;
-                full <<= 24;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 16;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 8;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                return endian_helpers::convert_endian(std::endian::little, full);
-            }
-            case 3: {
-                std::uint64_t full = b.partial.len;
-                full <<= 56;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 48;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 40;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 24;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 24;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 16;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                full <<= 8;
-                full |= _read_as_<std::uint8_t>(read_stream);
-                return endian_helpers::convert_endian(std::endian::little, full);
-            }
-            default:
-                return 0;
-            }
-        }
-
-        static std::string ReadString(std::istream& read_stream) {
-            std::uint64_t read = ReadCompressLen(read_stream);
-            std::string res;
-            res.reserve(read);
-            for (std::uint64_t i = 0; i < read; i++)
-                res.push_back(ReadValue<char>(read_stream));
-            return res;
-        }
-
-        static value ReadCompound(std::istream& read_stream, enbt::type_id tid) {
-            std::size_t len = ReadDefineLen(read_stream, tid);
-            std::unordered_map<std::string, value> result;
-            for (std::size_t i = 0; i < len; i++) {
-                std::string key = ReadString(read_stream);
-                result[key] = ReadToken(read_stream);
-            }
-            return result;
-        }
-
-        static std::vector<value> ReadArray(std::istream& read_stream, enbt::type_id tid) {
-            std::size_t len = ReadDefineLen(read_stream, tid);
-            if (!len)
-                return {};
-            enbt::type_id a_tid = ReadTypeID(read_stream);
-            std::vector<value> result(len);
-            if (a_tid == enbt::type::bit) {
-                std::int8_t i = 0;
-                std::uint8_t value = _read_as_<std::uint8_t>(read_stream);
-                for (auto& it : result) {
-                    if (i >= 8) {
-                        i = 0;
-                        value = _read_as_<std::uint8_t>(read_stream);
-                    }
-                    bool set = (bool)(value << i);
-                    it = set;
-                }
-            } else {
-                for (std::size_t i = 0; i < len; i++)
-                    result[i] = ReadValue(read_stream, a_tid);
-            }
-            return result;
-        }
-
-        static std::vector<value> ReadDArray(std::istream& read_stream, enbt::type_id tid) {
-            std::size_t len = ReadDefineLen(read_stream, tid);
-            std::vector<value> result(len);
-            for (std::size_t i = 0; i < len; i++)
-                result[i] = ReadToken(read_stream);
-            return result;
-        }
-
-        static value ReadSArray(std::istream& read_stream, enbt::type_id tid) {
-            std::uint64_t len = ReadCompressLen(read_stream);
-            auto endian = tid.get_endian();
-            value res;
-            switch (tid.length) {
-            case enbt::type_len::Tiny: {
-                std::uint8_t* arr = ReadArray<std::uint8_t>(read_stream, len, endian);
-                res = {arr, len};
-                delete[] arr;
-                break;
-            }
-            case enbt::type_len::Short: {
-                std::uint16_t* arr = ReadArray<std::uint16_t>(read_stream, len, endian);
-                res = {arr, len};
-                delete[] arr;
-                break;
-            }
-            case enbt::type_len::Default: {
-                std::uint32_t* arr = ReadArray<std::uint32_t>(read_stream, len, endian);
-                res = {arr, len};
-                delete[] arr;
-                break;
-            }
-            case enbt::type_len::Long: {
-                std::uint64_t* arr = ReadArray<std::uint64_t>(read_stream, len, endian);
-                res = {arr, len};
-                delete[] arr;
-                break;
-            }
-            default:
-                throw enbt::exception();
-            }
-            return res;
-        }
-
-        static value ReadValue(std::istream& read_stream, enbt::type_id tid) {
-            switch (tid.type) {
-            case enbt::type::integer:
-                switch (tid.length) {
-                case enbt::type_len::Tiny:
-                    if (tid.is_signed)
-                        return ReadValue<std::int8_t>(read_stream, tid.get_endian());
-                    else
-                        return ReadValue<std::uint8_t>(read_stream, tid.get_endian());
-                case enbt::type_len::Short:
-                    if (tid.is_signed)
-                        return ReadValue<std::int16_t>(read_stream, tid.get_endian());
-                    else
-                        return ReadValue<std::uint16_t>(read_stream, tid.get_endian());
-                case enbt::type_len::Default:
-                    if (tid.is_signed)
-                        return ReadValue<std::int32_t>(read_stream, tid.get_endian());
-                    else
-                        return ReadValue<std::uint32_t>(read_stream, tid.get_endian());
-                case enbt::type_len::Long:
-                    if (tid.is_signed)
-                        return ReadValue<std::int64_t>(read_stream, tid.get_endian());
-                    else
-                        return ReadValue<std::uint64_t>(read_stream, tid.get_endian());
-                default:
-                    return value();
-                }
-            case enbt::type::floating:
-                switch (tid.length) {
-                case enbt::type_len::Default:
-                    return ReadValue<float>(read_stream, tid.get_endian());
-                case enbt::type_len::Long:
-                    return ReadValue<double>(read_stream, tid.get_endian());
-                default:
-                    return value();
-                }
-            case enbt::type::var_integer:
-                switch (tid.length) {
-                case enbt::type_len::Default:
-                    if (tid.is_signed)
-                        return ReadVar<std::int32_t>(read_stream, tid.get_endian());
-                    else
-                        return ReadVar<std::uint32_t>(read_stream, tid.get_endian());
-                case enbt::type_len::Long:
-                    if (tid.is_signed)
-                        return ReadVar<std::int64_t>(read_stream, tid.get_endian());
-                    else
-                        return ReadVar<std::uint64_t>(read_stream, tid.get_endian());
-                default:
-                    return value();
-                }
-            case enbt::type::comp_integer: {
-                std::uint64_t val = ReadCompressLen(read_stream);
-                switch (tid.length) {
-                case enbt::type_len::Tiny:
-                    if (val != ((std::uint8_t)val))
-                        throw enbt::exception("Invalid encoding for comp_integer, type is too small");
-                    return value((std::uint8_t)val);
-                case enbt::type_len::Short:
-                    if (val != ((std::uint16_t)val))
-                        throw enbt::exception("Invalid encoding for comp_integer, type is too small");
-                    return value((std::uint16_t)val);
-                case enbt::type_len::Default:
-                    if (val != ((std::uint32_t)val))
-                        throw enbt::exception("Invalid encoding for comp_integer, type is too small");
-                    return value((std::uint32_t)val);
-                case enbt::type_len::Long:
-                    return value(val);
-                default:
-                    return value();
-                }
-            }
-            case enbt::type::uuid:
-                return ReadValue<enbt::raw_uuid>(read_stream, tid.get_endian());
-            case enbt::type::sarray:
-                return ReadSArray(read_stream, tid);
-            case enbt::type::darray:
-                return value(ReadDArray(read_stream, tid), tid);
-            case enbt::type::compound:
-                return ReadCompound(read_stream, tid);
-            case enbt::type::array:
-                return value(ReadArray(read_stream, tid), tid);
-            case enbt::type::optional:
-                return tid.is_signed ? value(true, ReadToken(read_stream)) : value(false, value());
-            case enbt::type::bit:
-                return value((bool)tid.is_signed);
-            case enbt::type::string:
-                return ReadString(read_stream);
-            default:
-                return value();
-            }
-        }
-
-        static value ReadToken(std::istream& read_stream) {
-            return ReadValue(read_stream, ReadTypeID(read_stream));
-        }
-
-        static void CheckVersion(std::istream& read_stream) {
-            if (ReadValue<std::uint8_t>(read_stream) != ENBT_VERSION_HEX)
-                throw enbt::exception("Unsupported version");
-        }
-
-        static void SkipSignedCompound(std::istream& read_stream, std::uint64_t len, bool wide) {
-            std::uint8_t add = 1 + wide;
-            for (std::uint64_t i = 0; i < len; i++) {
-                read_stream.seekg(read_stream.tellg() += add);
-                SkipToken(read_stream);
-            }
-        }
-
-        static void SkipUnsignedCompoundString(std::istream& read_stream) {
-            std::uint64_t skip = ReadCompressLen(read_stream);
-            read_stream.seekg(read_stream.tellg() += skip);
-        }
-
-        static void SkipUnsignedCompound(std::istream& read_stream, std::uint64_t len, bool wide) {
-            std::uint8_t add = 4;
-            if (wide)
-                add = 8;
-            for (std::uint64_t i = 0; i < len; i++) {
-                SkipUnsignedCompoundString(read_stream);
-                SkipToken(read_stream);
-            }
-        }
-
-        static void SkipCompound(std::istream& read_stream, enbt::type_id tid) {
-            std::uint64_t len = ReadDefineLen64(read_stream, tid);
-            if (tid.is_signed)
-                SkipSignedCompound(read_stream, len, false);
-            else
-                SkipUnsignedCompound(read_stream, len, true);
-        }
-
-        //return zero if cannot, else return type size
-        static std::uint8_t CanFastIndex(enbt::type_id tid) {
-            switch (tid.type) {
-            case enbt::type::integer:
-            case enbt::type::floating:
-                switch (tid.length) {
-                case enbt::type_len::Tiny:
-                    return 1;
-                case enbt::type_len::Short:
-                    return 2;
-                case enbt::type_len::Default:
-                    return 4;
-                case enbt::type_len::Long:
-                    return 8;
-                }
-                return 0;
-            case enbt::type::uuid:
-                return 16;
-            case enbt::type::bit:
-                return 1;
-            default:
-                return 0;
-            }
-        }
-
-        static void SkipArray(std::istream& read_stream, enbt::type_id tid) {
-            std::uint64_t len = ReadDefineLen64(read_stream, tid);
-            if (!len)
-                return;
-            auto items_tid = ReadTypeID(read_stream);
-            if (int index_multiplier = CanFastIndex(items_tid); !index_multiplier)
-                for (std::uint64_t i = 0; i < len; i++)
-                    SkipValue(read_stream, items_tid);
-            else {
-                if (tid == enbt::type::bit) {
-                    std::uint64_t actual_len = len / 8;
-                    if (len % 8)
-                        ++actual_len;
-                    read_stream.seekg(read_stream.tellg() += actual_len);
-                } else
-                    read_stream.seekg(read_stream.tellg() += len * index_multiplier);
-            }
-        }
-
-        static void SkipDArray(std::istream& read_stream, enbt::type_id tid) {
-            std::uint64_t len = ReadDefineLen64(read_stream, tid);
-            for (std::uint64_t i = 0; i < len; i++)
-                SkipToken(read_stream);
-        }
-
-        static void SkipSArray(std::istream& read_stream, enbt::type_id tid) {
-            std::uint64_t index = ReadCompressLen(read_stream);
-            switch (tid.length) {
-            case enbt::type_len::Tiny:
-                read_stream.seekg(read_stream.tellg() += index);
-                break;
-            case enbt::type_len::Short:
-                read_stream.seekg(read_stream.tellg() += index * 2);
-                break;
-            case enbt::type_len::Default:
-                read_stream.seekg(read_stream.tellg() += index * 4);
-                break;
-            case enbt::type_len::Long:
-                read_stream.seekg(read_stream.tellg() += index * 8);
-                break;
-            default:
-                break;
-            }
-        }
-
-        static void SkipString(std::istream& read_stream) {
-            std::uint64_t len = ReadCompressLen(read_stream);
-            read_stream.seekg(read_stream.tellg() += len);
-        }
-
-        static void SkipValue(std::istream& read_stream, enbt::type_id tid) {
-            switch (tid.type) {
-            case enbt::type::floating:
-            case enbt::type::integer:
-                switch (tid.length) {
-                case enbt::type_len::Tiny:
-                    read_stream.seekg(read_stream.tellg() += 1);
-                    break;
-                case enbt::type_len::Short:
-                    read_stream.seekg(read_stream.tellg() += 2);
-                    break;
-                case enbt::type_len::Default:
-                    read_stream.seekg(read_stream.tellg() += 4);
-                    break;
-                case enbt::type_len::Long:
-                    read_stream.seekg(read_stream.tellg() += 8);
-                    break;
-                }
-                break;
-            case enbt::type::var_integer:
-                switch (tid.length) {
-                case enbt::type_len::Default:
-                    if (tid.is_signed)
-                        ReadVar<std::int32_t>(read_stream, std::endian::native);
-                    else
-                        ReadVar<std::uint32_t>(read_stream, std::endian::native);
-                    break;
-                case enbt::type_len::Long:
-                    if (tid.is_signed)
-                        ReadVar<std::int64_t>(read_stream, std::endian::native);
-                    else
-                        ReadVar<std::uint64_t>(read_stream, std::endian::native);
-                }
-                break;
-            case enbt::type::comp_integer: {
-                uint64_t val = ReadCompressLen(read_stream);
-                switch (tid.length) {
-                case enbt::type_len::Tiny:
-                    if (val != ((std::uint8_t)val))
-                        throw enbt::exception("Invalid encoding for comp_integer, type is too small");
-                    break;
-                case enbt::type_len::Short:
-                    if (val != ((std::uint16_t)val))
-                        throw enbt::exception("Invalid encoding for comp_integer, type is too small");
-                    break;
-                case enbt::type_len::Default:
-                    if (val != ((std::uint32_t)val))
-                        throw enbt::exception("Invalid encoding for comp_integer, type is too small");
-                    break;
-                case enbt::type_len::Long:
-                    if (val != ((std::uint64_t)val))
-                        throw enbt::exception("Invalid encoding for comp_integer, type is too small");
-                    break;
-                default:
-                    break;
-                }
-                break;
-            }
-            case enbt::type::uuid:
-                read_stream.seekg(read_stream.tellg() += 16);
-                break;
-            case enbt::type::sarray:
-                SkipSArray(read_stream, tid);
-                break;
-            case enbt::type::darray:
-                SkipDArray(read_stream, tid);
-                break;
-            case enbt::type::compound:
-                SkipCompound(read_stream, tid);
-                break;
-            case enbt::type::array:
-                SkipArray(read_stream, tid);
-                break;
-            case enbt::type::optional:
-                if (tid.is_signed)
-                    SkipToken(read_stream);
-                break;
-            case enbt::type::bit:
-                break;
-            case enbt::type::string:
-                SkipString(read_stream);
-                break;
-            }
-        }
-
-        static void SkipToken(std::istream& read_stream) {
-            return SkipValue(read_stream, ReadTypeID(read_stream));
-        }
-
-        //move read stream cursor to value in compound, return true if value found
-        static bool FindValueCompound(std::istream& read_stream, enbt::type_id tid, const std::string& key) {
-            std::size_t len = ReadDefineLen(read_stream, tid);
-            for (std::size_t i = 0; i < len; i++) {
-                if (ReadString(read_stream) != key)
-                    SkipValue(read_stream, ReadTypeID(read_stream));
-                else
-                    return true;
-            }
-            return false;
-        }
-
-        static void IndexStaticArray(std::istream& read_stream, std::uint64_t index, std::uint64_t len, enbt::type_id targetId) {
-            if (index >= len)
-                throw enbt::exception('[' + std::to_string(index) + "] out of range " + std::to_string(len));
-            if (std::uint8_t skipper = CanFastIndex(targetId)) {
-                if (targetId != enbt::type::bit)
-                    read_stream.seekg(read_stream.tellg() += index * skipper);
-                else
-                    read_stream.seekg(read_stream.tellg() += index / 8);
-            } else
-                for (std::uint64_t i = 0; i < index; i++)
-                    SkipValue(read_stream, targetId);
-        }
-
-        static void IndexDynArray(std::istream& read_stream, std::uint64_t index, std::uint64_t len) {
-            if (index >= len)
-                throw enbt::exception('[' + std::to_string(index) + "] out of range " + std::to_string(len));
-            for (std::uint64_t i = 0; i < index; i++)
-                SkipToken(read_stream);
-        }
-
-        static void IndexArray(std::istream& read_stream, std::uint64_t index, enbt::type_id arr_tid) {
-            switch (arr_tid.type) {
-            case enbt::type::array: {
-                std::uint64_t len = ReadDefineLen64(read_stream, arr_tid);
-                if (!len)
-                    throw enbt::exception("This array is empty");
-                auto targetId = ReadTypeID(read_stream);
-                IndexStaticArray(read_stream, index, len, targetId);
-                break;
-            }
-            case enbt::type::darray:
-                IndexDynArray(read_stream, index, ReadDefineLen64(read_stream, arr_tid));
-                break;
-            default:
-                throw enbt::exception("Invalid type id");
-            }
-        }
-
-        static void IndexArray(std::istream& read_stream, std::uint64_t index) {
-            IndexArray(read_stream, index, ReadTypeID(read_stream));
-        }
-
-        static std::vector<std::string> SplitS(std::string str, std::string delimiter) {
-            std::vector<std::string> res;
-            std::size_t pos = 0;
-            std::string token;
-            while ((pos = str.find(delimiter)) != std::string::npos) {
-                token = str.substr(0, pos);
-                res.push_back(token);
-                str.erase(0, pos + delimiter.length());
-            }
-            return res;
-        }
-
-        //move read_stream cursor to value,
-        //value_path similar: "0/the test/4/54",
-        //return success status
-        //can throw enbt::exception
-        static bool MoveToValuePath(std::istream& read_stream, const std::string& value_path) {
-            try {
-                for (auto&& tmp : SplitS(value_path, "/")) {
-                    auto tid = ReadTypeID(read_stream);
-                    switch (tid.type) {
-                    case enbt::type::array:
-                    case enbt::type::darray:
-                        IndexArray(read_stream, std::stoull(tmp), tid);
-                        continue;
-                    case enbt::type::compound:
-                        if (!FindValueCompound(read_stream, tid, tmp))
-                            return false;
-                        continue;
-                    default:
-                        return false;
-                    }
-                }
-                return true;
-            } catch (const std::out_of_range&) {
-                throw;
-            } catch (const std::exception&) {
-                return false;
-            }
-        }
-
-        static value GetValuePath(std::istream& read_stream, const std::string& value_path) {
-            auto old_pos = read_stream.tellg();
-            bool is_bit_value = false;
-            bool bit_value;
-            try {
-                for (auto&& tmp : SplitS(value_path, "/")) {
-                    auto tid = ReadTypeID(read_stream);
-                    switch (tid.type) {
-                    case enbt::type::array: {
-                        std::uint64_t len = ReadDefineLen64(read_stream, tid);
-                        auto targetId = ReadTypeID(read_stream);
-                        std::uint64_t index = std::stoull(tmp);
-                        IndexStaticArray(read_stream, index, len, targetId);
-                        if (targetId.type == enbt::type::bit) {
-                            is_bit_value = true;
-                            bit_value = _read_as_<std::uint8_t>(read_stream) << index % 8;
-                        }
-                        continue;
-                    }
-                    case enbt::type::darray:
-                        IndexArray(read_stream, std::stoull(tmp), tid);
-                        continue;
-                    case enbt::type::compound:
-                        if (!FindValueCompound(read_stream, tid, tmp))
-                            return false;
-                        continue;
-                    default:
-                        throw std::invalid_argument("Invalid Path to Value");
-                    }
-                }
-            } catch (...) {
-                read_stream.seekg(old_pos);
-                throw;
-            }
-            read_stream.seekg(old_pos);
-            if (is_bit_value)
-                return bit_value;
-            return ReadToken(read_stream);
-        }
-    };
-}
-
-    #undef ENBT_VERSION_HEX
-    #undef ENBT_VERSION_STR
 
 #endif /* SRC_LIBRARY_ENBT_ENBT */
 
