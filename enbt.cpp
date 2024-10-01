@@ -1028,6 +1028,64 @@ namespace enbt {
         );
     }
 
+    enbt::value value::cast_to(enbt::type_id id) const {
+        static auto convert_ = [](enbt::type_id id, const enbt::value& self) -> enbt::value {
+            switch (id.type) {
+            case type::none:
+                return enbt::value();
+            case type::integer:
+                switch (id.length) {
+                case type_len::Tiny:
+                    return id.is_signed ? value((int8_t)self) : value((uint8_t)self);
+                case type_len::Short:
+                    return id.is_signed ? value((int16_t)self) : value((uint16_t)self);
+                case type_len::Default:
+                    return id.is_signed ? value((int32_t)self) : value((uint32_t)self);
+                case type_len::Long:
+                    return id.is_signed ? value((int64_t)self) : value((uint64_t)self);
+                default:
+                    break;
+                }
+                break;
+            case type::var_integer:
+            case type::comp_integer:
+                switch (id.length) {
+                case type_len::Default: {
+                    enbt::value res(id.is_signed ? value((int32_t)self) : value((uint32_t)self));
+                    res.data_type_id.type = id.type;
+                    return res;
+                }
+                case type_len::Long: {
+                    enbt::value res(id.is_signed ? value((int64_t)self) : value((uint64_t)self));
+                    res.data_type_id.type = id.type;
+                    return res;
+                }
+                default:
+                    break;
+                }
+                break;
+            case type::floating:
+                switch (id.length) {
+                case type_len::Default:
+                    return (float)self;
+                case type_len::Long:
+                    return (double)self;
+                default:
+                    break;
+                }
+                break;
+            case type::string:
+                return (std::string)self;
+            default:
+                break;
+            }
+            throw enbt::exception("Can not convert to this type");
+        };
+        auto res = convert_(id, *this);
+        res.data_type_id.endian = id.endian;
+        return std::move(res);
+    }
+
     value::operator const std::uint8_t*() const {
         return std::get<std::uint8_t*>(content());
     }
@@ -2108,4 +2166,870 @@ namespace enbt {
             return read_token(read_stream);
         }
     };
+}
+
+namespace senbt {
+    enbt::value parse_(std::string_view& string);
+
+    // compound { "name": (value)}
+    // darray [...]
+    // array a[...]
+    // sarray s'def'[...]  //'def' == ub, us, ui, ul, b, s, i, l
+    // optional ?()
+    // bit true/false   t/f
+    // integer (num) / (num)(def) //def == i, I, l, L, s, S, b, B
+    // float (num)f / (num)d / (num.num)F / (num.num)D
+    // var_integer (num)v / (num)V  //v == 32, V == 64
+    // comp_integer (num)c / (num)C  //c == 32, C == 64
+    // uuid    uuid"uuid"   /   uuid'uuid' / u"uuid"  /  u'uuid'
+    // string "string"  'string'
+    // none //just empty string
+    // log_item ((item))
+    //
+    //delimiter: ,
+
+    std::string_view consume(std::string_view& string) {
+        auto pos = string.find_first_of(" \t\n\r,})]");
+        if (pos == std::string_view::npos) {
+            auto res = string;
+            string = {};
+            return res;
+        } else {
+            auto res = string.substr(0, pos);
+            string = string.substr(pos);
+            return res;
+        }
+    }
+
+    void skip_empty(std::string_view& string) {
+        auto pos = string.find_first_not_of(" \t\r\b\n");
+        if (pos != std::string_view::npos)
+            string = string.substr(pos);
+    }
+
+    uint64_t parse_numeric_part(std::string_view string) {
+        if (string.starts_with("0x") | string.starts_with("0X"))
+            return std::stoull(std::string(string), nullptr, 16);
+        else if (string.starts_with("0b") | string.starts_with("0B"))
+            return std::stoull(std::string(string), nullptr, 2);
+        else if (string.starts_with("0o") | string.starts_with("0O"))
+            return std::stoull(std::string(string), nullptr, 8);
+        else
+            return std::stoull(std::string(string), nullptr, 10);
+    }
+
+    enbt::value parse_numeric(std::string_view string) {
+        bool is_negative = string.starts_with('-');
+        bool is_floating = false;
+        bool is_var = false;
+        bool is_comp = false;
+        enbt::type_len len = enbt::type_len::Long;
+
+        if (string.starts_with('-') | string.starts_with('+'))
+            string = string.substr(1);
+
+        if (string.ends_with('f') | string.ends_with('F')) {
+            is_floating = true;
+            len = enbt::type_len::Default;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('d') | string.ends_with('D')) {
+            is_floating = true;
+            len = enbt::type_len::Long;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('v')) {
+            is_var = true;
+            len = enbt::type_len::Default;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('V')) {
+            is_var = true;
+            len = enbt::type_len::Long;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('c')) {
+            is_comp = true;
+            len = enbt::type_len::Default;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('C')) {
+            is_comp = true;
+            len = enbt::type_len::Long;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('i')) {
+            len = enbt::type_len::Default;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('I') | string.ends_with('l') | string.ends_with('L')) {
+            len = enbt::type_len::Long;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('s') | string.ends_with('S')) {
+            len = enbt::type_len::Short;
+            string = string.substr(0, string.size() - 1);
+        } else if (string.ends_with('b') | string.ends_with('B')) {
+            len = enbt::type_len::Tiny;
+            string = string.substr(0, string.size() - 1);
+        }
+
+        auto pos = string.find('.');
+        if (pos != std::string_view::npos) {
+            is_floating = true;
+            if (is_var | is_comp)
+                throw std::invalid_argument("floating point numbers cannot be var or comp integers");
+        }
+
+        if (is_floating) {
+            auto first_part = parse_numeric_part(string.substr(0, pos));
+            auto second_part = parse_numeric_part(string.substr(pos + 1));
+
+            double res
+                = is_negative ? -((double)first_part + (double)second_part / std::pow(10, string.size() - pos - 1))
+                              : (double)first_part + (double)second_part / std::pow(10, string.size() - pos - 1);
+            return len == enbt::type_len::Long ? enbt::value(res) : enbt::value((float)res);
+        } else {
+            enbt::value val = is_negative ? enbt::value(-int64_t(parse_numeric_part(string))) : enbt::value(parse_numeric_part(string));
+            if (is_var)
+                return val.cast_to(enbt::type_id(enbt::type::var_integer, len));
+            else if (is_comp)
+                return val.cast_to(enbt::type_id(enbt::type::comp_integer, len));
+            else
+                return val.cast_to(enbt::type_id(enbt::type::integer, len));
+        }
+    }
+
+    std::string parse_string(std::string_view& string) {
+        char quote = string[0];
+        string = string.substr(1);
+        std::string res;
+        while (!string.empty()) {
+            if (string.starts_with('\\')) {
+                string = string.substr(1);
+                switch (string[0]) {
+                case '"':
+                case '\'':
+                case '\\':
+                    res.push_back(string[0]);
+                    break;
+                case 'n':
+                    res.push_back('\n');
+                    break;
+                case 't':
+                    res.push_back('\t');
+                    break;
+                case 'r':
+                    res.push_back('\r');
+                    break;
+                case 'b':
+                    res.push_back('\b');
+                    break;
+                case 'f':
+                    res.push_back('\f');
+                    break;
+                default:
+                    throw std::invalid_argument("Unsupported escape sequence");
+                }
+            } else if (string.starts_with(quote)) {
+                string = string.substr(1);
+                return res;
+            } else {
+                res.push_back(string[0]);
+                string = string.substr(1);
+            }
+        }
+        throw std::invalid_argument("unterminated string");
+    }
+
+    enbt::value parse_compound(std::string_view& string) {
+        string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected '}'");
+        enbt::compound result;
+        while (true) {
+            skip_empty(string);
+            if (string.starts_with('}')) {
+                string = string.substr(1);
+                break;
+            }
+            auto key = parse_string(string);
+            skip_empty(string);
+            if (string.empty())
+                throw std::invalid_argument("expected ':'");
+            if (string[0] != ':')
+                throw std::invalid_argument("expected ':'");
+            string = string.substr(1);
+            result[key] = parse_(string);
+            skip_empty(string);
+            if (string.empty())
+                throw std::invalid_argument("expected ',' or '}'");
+            if (string[0] == ',')
+                string = string.substr(1);
+            else if (string[0] == '}') {
+                string = string.substr(1);
+                break;
+            } else
+                throw std::invalid_argument("expected ',' or '}'");
+        }
+        return result;
+    }
+
+    enbt::dynamic_array parse_darray(std::string_view& string) {
+        string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected ']'");
+        enbt::dynamic_array result;
+        while (true) {
+            skip_empty(string);
+            if (string.starts_with(']')) {
+                string = string.substr(1);
+                break;
+            }
+            result.push_back(parse_(string));
+            skip_empty(string);
+            if (string.empty())
+                throw std::invalid_argument("expected ',' or ']'");
+            if (string[0] == ',')
+                string = string.substr(1);
+            else if (string[0] == ']') {
+                string = string.substr(1);
+                break;
+            } else
+                throw std::invalid_argument("expected ',' or ']'");
+        }
+        return result;
+    }
+
+    enbt::value parse_array(std::string_view& string) {
+        string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected '['");
+        if (string[0] != '[')
+            throw std::invalid_argument("expected '['");
+        string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected ']'");
+        enbt::fixed_array result;
+        while (true) {
+            skip_empty(string);
+            if (string.starts_with(']')) {
+                string = string.substr(1);
+                break;
+            }
+            result.push_back(parse_(string));
+            skip_empty(string);
+            if (string.empty())
+                throw std::invalid_argument("expected ',' or ']'");
+            if (string[0] == ',')
+                string = string.substr(1);
+            else if (string[0] == ']') {
+                string = string.substr(1);
+                break;
+            } else
+                throw std::invalid_argument("expected ',' or ']'");
+        }
+        return result;
+    }
+
+    // clang-format off
+    template <char ty, bool sign>
+    using parse_numeric_t = 
+        std::conditional_t<sign,
+            std::conditional_t<ty == 'b', std::int8_t,
+            std::conditional_t<ty == 's', std::int16_t,
+            std::conditional_t<ty == 'i', std::int32_t,
+            std::conditional_t<ty == 'l', std::int64_t,
+        void>>>>,
+            std::conditional_t<ty == 'b', std::uint8_t,
+            std::conditional_t<ty == 's', std::uint16_t,
+            std::conditional_t<ty == 'i', std::uint32_t,
+            std::conditional_t<ty == 'l', std::uint64_t,
+        void>>>>>;
+
+    // clang-format on
+
+    template <char ty, bool sign>
+    auto parse_sarray_typed(std::string_view& string) {
+        string = string.substr(1);
+        std::vector<parse_numeric_t<ty, sign>> result;
+        while (true) {
+            skip_empty(string);
+            if (string.starts_with(']')) {
+                string = string.substr(1);
+                break;
+            }
+            result.push_back(parse_numeric(string));
+            skip_empty(string);
+            if (string.empty())
+                throw std::invalid_argument("expected ',' or ']'");
+            if (string[0] == ',')
+                string = string.substr(1);
+            else if (string[0] == ']') {
+                string = string.substr(1);
+                break;
+            } else
+                throw std::invalid_argument("expected ',' or ']'");
+        }
+        return enbt::value(result.data(), result.size());
+    }
+
+    enbt::value parse_sarray(std::string_view& string) {
+        string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected simple array defintion");
+        bool is_unsigned = false;
+        if (string[0] == 'u' | string[0] == 'U') {
+            is_unsigned = true;
+            string = string.substr(1);
+        }
+        if (string.empty())
+            throw std::invalid_argument("expected simple array defintion");
+
+        switch (string[0]) {
+        case 'b':
+        case 'B':
+            return is_unsigned ? parse_sarray_typed<'b', false>(string) : parse_sarray_typed<'b', true>(string);
+        case 's':
+        case 'S':
+            return is_unsigned ? parse_sarray_typed<'s', false>(string) : parse_sarray_typed<'s', true>(string);
+        case 'i':
+        case 'I':
+            return is_unsigned ? parse_sarray_typed<'i', false>(string) : parse_sarray_typed<'i', true>(string);
+        case 'l':
+        case 'L':
+            return is_unsigned ? parse_sarray_typed<'l', false>(string) : parse_sarray_typed<'l', true>(string);
+        default:
+            throw std::invalid_argument("invalid simple array type");
+        }
+    }
+
+    enbt::value parse_optional(std::string_view& string) {
+        string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected '('");
+        if (string[0] != '(')
+            throw std::invalid_argument("expected '('");
+        string = string.substr(1);
+        skip_empty(string);
+        if (string.empty())
+            throw std::invalid_argument("expected ')'");
+        if (string[0] == ')') {
+            string = string.substr(1);
+            return enbt::value(false, enbt::value());
+        } else {
+            auto result = parse_(string);
+            skip_empty(string);
+            if (string.empty())
+                throw std::invalid_argument("expected ')'");
+            if (string[0] != ')')
+                throw std::invalid_argument("expected ')'");
+            string = string.substr(1);
+            return enbt::value(true, result);
+        }
+    }
+
+    enbt::value parse_log_item(std::string_view& string) {
+        string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected '('");
+        auto result = parse_(string);
+        skip_empty(string);
+        if (string.empty())
+            throw std::invalid_argument("expected ')'");
+        if (string[0] != ')')
+            throw std::invalid_argument("expected ')'");
+        string = string.substr(1);
+        return result;
+    }
+
+    enbt::value parse_uuid(std::string_view& string) {
+        if (string.starts_with("uuid") | string.starts_with("UUID"))
+            string = string.substr(4);
+        else
+            string = string.substr(1);
+        if (string.empty())
+            throw std::invalid_argument("expected '\"' or \"'\"");
+        if (!string.starts_with('\'') && !string.starts_with('\"'))
+            throw std::invalid_argument("expected '\"' or \"'\"");
+        auto str = parse_string(string);
+        if (str.size() != 36)
+            throw std::invalid_argument("invalid uuid string");
+        enbt::raw_uuid result;
+        for (std::size_t i = 0, j = 0; i < 36; i++) {
+            if (i == 8 | i == 13 | i == 18 | i == 23) {
+                if (str[i] != '-')
+                    throw std::invalid_argument("invalid uuid string");
+            } else {
+                if (str[i] >= '0' & str[i] <= '9')
+                    result.data[j / 2] |= (str[i] - '0') << (j % 2 ? 0 : 4);
+                else if (str[i] >= 'a' & str[i] <= 'f')
+                    result.data[j / 2] |= (str[i] - 'a' + 10) << (j % 2 ? 0 : 4);
+                else if (str[i] >= 'A' & str[i] <= 'F')
+                    result.data[j / 2] |= (str[i] - 'A' + 10) << (j % 2 ? 0 : 4);
+                else
+                    throw std::invalid_argument("invalid uuid string");
+
+                j++;
+            }
+        }
+        return result;
+    }
+
+    enbt::value parse_true(std::string_view string) {
+        if (string == "t" | string == "T")
+            return enbt::value(true);
+        else if (string == "true" | string == "TRUE")
+            return enbt::value(true);
+        else
+            throw std::invalid_argument("invalid boolean value");
+    }
+
+    enbt::value parse_false(std::string_view string) {
+        if (string == "f" | string == "F")
+            return enbt::value(false);
+        else if (string == "false" | string == "FALSE")
+            return enbt::value(false);
+        else
+            throw std::invalid_argument("invalid boolean value");
+    }
+
+    enbt::value parse_none(std::string_view string) {
+        if (string == "n" | string == "N")
+            return enbt::value();
+        else if (string == "none" | string == "NONE")
+            return enbt::value();
+        else if (string == "null" | string == "NULL")
+            return enbt::value();
+        else
+            throw std::invalid_argument("invalid none value");
+    }
+
+    enbt::value parse_(std::string_view& string) {
+        skip_empty(string);
+        switch (string[0]) {
+        case '{':
+            return parse_compound(string);
+        case '[':
+            return parse_darray(string);
+        case 'a':
+            return parse_array(string);
+        case 's':
+            return parse_sarray(string);
+        case '?':
+            return parse_optional(string);
+        case 't':
+        case 'T':
+            return parse_true(consume(string));
+        case 'f':
+        case 'F':
+            return parse_false(consume(string));
+        case '\'':
+        case '\"':
+            return parse_string(string);
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+        case '.':
+        case '-':
+            return parse_numeric(consume(string));
+        case 'n':
+        case 'N':
+            return parse_none(consume(string));
+        case '(':
+            return parse_log_item(string);
+        case 'u':
+        case 'U':
+            return parse_uuid(string);
+        default:
+            throw std::invalid_argument("invalid value");
+        }
+    }
+
+    enbt::value parse(std::string_view& string) {
+        return parse_(string);
+    }
+
+    enbt::value parse(std::string_view string) {
+        return parse_(string);
+    }
+
+    std::string de_format(const std::string& string) {
+        //replaces special symbols with \t \n \b \r \f \' \" and \\
+
+        std::string res;
+        res.reserve(string.size() * 1.2);
+        for (std::size_t i = 0; i < string.size(); i++) {
+            switch (string[i]) {
+            case '\t':
+                res += "\\t";
+                break;
+            case '\n':
+                res += "\\n";
+                break;
+            case '\b':
+                res += "\\b";
+                break;
+            case '\r':
+                res += "\\r";
+                break;
+            case '\f':
+                res += "\\f";
+                break;
+            case '\'':
+                res += "\\'";
+                break;
+            case '\"':
+                res += "\\\"";
+                break;
+            case '\\':
+                res += "\\\\";
+                break;
+            default:
+                res.push_back(string[i]);
+            }
+        }
+
+        return res;
+    }
+
+    void serialize(std::string& res, const enbt::value& value, std::string& spaces, bool compress, bool type_erasure) {
+        switch (value.get_type()) {
+        case enbt::type::none:
+            res += "null";
+            break;
+        case enbt::type::integer:
+            if (type_erasure) {
+                res += (value.get_type_sign() ? std::to_string((int64_t)value) : std::to_string((uint64_t)value));
+                break;
+            }
+            switch (value.get_type_len()) {
+            case enbt::type_len::Tiny:
+                res += (value.get_type_sign() ? std::to_string((int8_t)value) : std::to_string((uint8_t)value)) + "b";
+                break;
+            case enbt::type_len::Short:
+                res += (value.get_type_sign() ? std::to_string((int16_t)value) : std::to_string((uint16_t)value)) + "s";
+                break;
+            case enbt::type_len::Default:
+                res += (value.get_type_sign() ? std::to_string((int32_t)value) : std::to_string((uint32_t)value)) + "i";
+                break;
+            case enbt::type_len::Long:
+                res += (value.get_type_sign() ? std::to_string((int64_t)value) : std::to_string((uint64_t)value)) + "l";
+                break;
+            }
+            break;
+        case enbt::type::floating:
+            if (type_erasure) {
+                res += std::to_string((double)value);
+                break;
+            }
+            switch (value.get_type_len()) {
+            case enbt::type_len::Tiny:
+            case enbt::type_len::Short:
+                throw enbt::exception("not implemented");
+            case enbt::type_len::Default:
+                res += std::to_string((float)value) + "f";
+                break;
+            case enbt::type_len::Long:
+                res += std::to_string((double)value) + "d";
+                break;
+            }
+            break;
+        case enbt::type::var_integer:
+            if (type_erasure) {
+                res += (value.get_type_sign() ? std::to_string((int64_t)value) : std::to_string((uint64_t)value));
+                break;
+            }
+            switch (value.get_type_len()) {
+            case enbt::type_len::Tiny:
+            case enbt::type_len::Short:
+                throw enbt::exception("not implemented");
+            case enbt::type_len::Default:
+                res += (value.get_type_sign() ? std::to_string((int32_t)value) : std::to_string((uint32_t)value)) + "v";
+                break;
+            case enbt::type_len::Long:
+                res += (value.get_type_sign() ? std::to_string((int64_t)value) : std::to_string((uint64_t)value)) + "V";
+                break;
+            }
+            break;
+        case enbt::type::comp_integer:
+            if (type_erasure) {
+                res += (value.get_type_sign() ? std::to_string((int64_t)value) : std::to_string((uint64_t)value));
+                break;
+            }
+            switch (value.get_type_len()) {
+            case enbt::type_len::Tiny:
+            case enbt::type_len::Short:
+                throw enbt::exception("not implemented");
+            case enbt::type_len::Default:
+                res += (value.get_type_sign() ? std::to_string((int32_t)value) : std::to_string((uint32_t)value)) + "c";
+                break;
+            case enbt::type_len::Long:
+                res += (value.get_type_sign() ? std::to_string((int64_t)value) : std::to_string((uint64_t)value)) + "C";
+                break;
+            }
+            break;
+        case enbt::type::uuid: {
+            res += "uuid\"";
+            enbt::raw_uuid tmp = value;
+            for (std::size_t i = 0; i < 16; i++) {
+                res += "0123456789abcdef"[tmp.data[i] >> 4];
+                res += "0123456789abcdef"[tmp.data[i] & 0xF];
+                if (i == 3 | i == 5 | i == 7 | i == 9)
+                    res += '-';
+            }
+            res += '"';
+            break;
+        }
+        case enbt::type::sarray: {
+            res += "s";
+            if (!value.get_type_sign())
+                res += 'u';
+            switch (value.get_type_len()) {
+            case enbt::type_len::Tiny:
+                res += "b";
+                break;
+            case enbt::type_len::Short:
+                res += "s";
+                break;
+            case enbt::type_len::Default:
+                res += "i";
+                break;
+            case enbt::type_len::Long:
+                res += "l";
+                break;
+            }
+            if (value.size()) {
+                res += "[\n";
+                if (!compress)
+                    spaces.push_back('\t');
+                if (value.get_type_sign()) {
+                    switch (value.get_type_len()) {
+                    case enbt::type_len::Tiny: {
+                        auto data = enbt::simple_array_i8::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    case enbt::type_len::Short: {
+                        auto data = enbt::simple_array_i16::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    case enbt::type_len::Default: {
+                        auto data = enbt::simple_array_i32::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    case enbt::type_len::Long: {
+                        auto data = enbt::simple_array_i64::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    }
+                } else {
+                    switch (value.get_type_len()) {
+                    case enbt::type_len::Tiny: {
+                        auto data = enbt::simple_array_ui8::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    case enbt::type_len::Short: {
+                        auto data = enbt::simple_array_ui16::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    case enbt::type_len::Default: {
+                        auto data = enbt::simple_array_ui32::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    case enbt::type_len::Long: {
+                        auto data = enbt::simple_array_ui64::make_ref(value);
+                        for (std::size_t i = 0; i < data.size(); i++) {
+                            res += spaces + std::to_string(data[i]);
+                            if (i != data.size() - 1)
+                                res += ',';
+                            if (!compress)
+                                res += '\n';
+                        }
+                        break;
+                    }
+                    }
+                }
+                res.pop_back();
+                if (!compress) {
+                    spaces.pop_back();
+                    res.pop_back();
+                    res += '\n';
+                }
+                res += spaces + ']';
+            } else
+                res += "[]";
+            break;
+        }
+        case enbt::type::compound: {
+            auto compound = enbt::compound::make_ref(value);
+            if (compound.size()) {
+                if (!compress)
+                    spaces.push_back('\t');
+                res += "{";
+                for (auto&& [name, value] : compound) {
+                    if (!compress)
+                        res += '\n';
+                    res += spaces + '"' + de_format(name) + "\": ";
+                    serialize(res, value, spaces, compress, type_erasure);
+                    res += ',';
+                }
+                res.pop_back();
+                if (!compress) {
+                    spaces.pop_back();
+                    res += '\n';
+                }
+
+                res += spaces + "}";
+            } else
+                res += "{}";
+            break;
+        }
+        case enbt::type::darray: {
+            auto arr = enbt::dynamic_array::make_ref(value);
+            if (!compress)
+                spaces.push_back('\t');
+            res += "[";
+            for (auto&& value : arr) {
+                if (!compress)
+                    res += '\n';
+                res += spaces;
+                serialize(res, value, spaces, compress, type_erasure);
+                res += ',';
+            }
+            if (!compress)
+                spaces.pop_back();
+
+            if (arr.size()) {
+                res.pop_back();
+                if (!compress)
+                    res += '\n';
+                res += spaces + "]";
+            } else
+                res += "]";
+            break;
+        }
+        case enbt::type::array: {
+            auto arr = enbt::dynamic_array::make_ref(value);
+            if (!compress)
+                spaces.push_back('\t');
+            if (type_erasure)
+                res += "[";
+            else
+                res += "a[";
+            for (auto&& value : arr) {
+                if (!compress)
+                    res += '\n';
+                res += spaces;
+                serialize(res, value, spaces, compress, type_erasure);
+                res += ',';
+            }
+            if (!compress)
+                spaces.pop_back();
+
+            if (arr.size()) {
+                res.pop_back();
+                if (!compress)
+                    res += '\n';
+                res += spaces + "]";
+            } else
+                res += ']';
+            break;
+        }
+        case enbt::type::optional: {
+            auto val = value.get_optional();
+            if (!compress) {
+                if (val) {
+                    spaces.push_back('\t');
+                    res += "?(\n" + spaces;
+                    serialize(res, *val, spaces, compress, type_erasure);
+                    spaces.pop_back();
+                    res += '\n' + spaces + ")";
+                } else
+                    res += "?()";
+            } else {
+                if (val) {
+                    res += "?(";
+                    serialize(res, *val, spaces, compress, type_erasure);
+                    res += ")";
+                } else
+                    res += "?()";
+            }
+            break;
+        }
+        case enbt::type::bit:
+            res += value ? "true" : "false";
+            break;
+        case enbt::type::string:
+            res += '"' + de_format((const std::string&)value) + '"';
+            break;
+        case enbt::type::log_item:
+            if (!compress) {
+                spaces.push_back('\t');
+                res += "(\n" + spaces;
+                serialize(res, value.get_log_value(), spaces, compress, type_erasure);
+                spaces.pop_back();
+                res += '\n' + spaces + ")";
+            } else {
+                res += "(";
+                serialize(res, value.get_log_value(), spaces, compress, type_erasure);
+                res += ")";
+            }
+            break;
+        }
+    }
+
+    std::string serialize(const enbt::value& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, value, spaces, compress, type_erasure);
+        return res;
+    }
 }

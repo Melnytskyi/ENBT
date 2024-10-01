@@ -280,6 +280,8 @@ namespace enbt {
     class value {
         friend inline value from_log_item(const value& val);
         friend inline value from_log_item(value&& val);
+        friend class fixed_array_ref;
+        friend class dynamic_array_ref;
 
         template <typename T, typename Enable = void>
         struct is_optional : std::false_type {};
@@ -826,6 +828,22 @@ namespace enbt {
             return nullptr;
         }
 
+        const value& get_log_value() const {
+            if (data_type_id.type == enbt::type::log_item)
+                return *(value*)data;
+            return *this;
+        }
+
+        value& get_log_value() {
+            if (data_type_id.type == enbt::type::log_item)
+                return *(value*)data;
+            return *this;
+        }
+
+        bool is_log_value() {
+            return data_type_id.type == enbt::type::log_item;
+        }
+
         bool contains() const {
             if (data_type_id.type == enbt::type::optional)
                 return data_type_id.is_signed;
@@ -1066,6 +1084,8 @@ namespace enbt {
 
         explicit operator std::string&();
         explicit operator const std::string&() const;
+
+        enbt::value cast_to(enbt::type_id id) const;
 
         operator std::string() const;
         operator const std::uint8_t*() const;
@@ -1887,14 +1907,31 @@ namespace enbt {
         static fixed_array_ref make_ref(value& enbt) {
             if (enbt.get_type() == enbt::type::array)
                 return fixed_array_ref(enbt);
-            else
+            else if (enbt.get_type() == enbt::type::darray) {
+                if (enbt.size()) {
+                    enbt::type_id tid_check = enbt[0].type_id();
+                    for (auto& check : *std::get<std::vector<value>*>(enbt.content()))
+                        if (!check.type_equal(tid_check))
+                            throw enbt::exception("value is not a fixed array");
+                }
+                enbt.data_type_id.type = enbt::type::array;
+                return fixed_array_ref(enbt);
+            } else
                 throw enbt::exception("value is not a fixed array");
         }
 
         static fixed_array_ref make_ref(const value& enbt) {
             if (enbt.get_type() == enbt::type::array)
                 return fixed_array_ref(enbt);
-            else
+            else if (enbt.get_type() == enbt::type::darray) {
+                if (enbt.size()) {
+                    enbt::type_id tid_check = enbt[0].type_id();
+                    for (auto& check : *std::get<std::vector<value>*>(enbt.content()))
+                        if (!check.type_equal(tid_check))
+                            throw enbt::exception("value is not a fixed array");
+                }
+                return fixed_array_ref(enbt);
+            } else
                 throw enbt::exception("value is not a fixed array");
         }
 
@@ -1939,10 +1976,23 @@ namespace enbt {
                 throw enbt::exception("This array is constant");
             value to_set(std::forward<T>(_value));
 
-
             if (index != 0 && fixed_type.type != enbt::type::none) {
-                if (to_set.type_id() != fixed_type)
+                if (to_set.type_id() != fixed_type) {
+                    if (to_set.get_type() == fixed_type.type) {
+                        switch (fixed_type.type) {
+                        case enbt::type::integer:
+                        case enbt::type::var_integer:
+                        case enbt::type::comp_integer:
+                        case enbt::type::floating:
+                        case enbt::type::string:
+                            (*proxy)[index] = std::move(to_set.cast_to(fixed_type));
+                            return;
+                        default:
+                            break;
+                        }
+                    }
                     throw enbt::exception("Invalid set value, set value must be same as every item in fixed array");
+                }
             }
             fixed_type = to_set.type_id();
             (*proxy)[index] = std::move(to_set);
@@ -2028,14 +2078,19 @@ namespace enbt {
 
     public:
         static dynamic_array_ref make_ref(value& enbt) {
-            if (enbt.get_type() == enbt::type::array)
+            if (enbt.get_type() == enbt::type::darray)
                 return dynamic_array_ref(enbt);
-            else
+            else if (enbt.get_type() == enbt::type::array) {
+                enbt.data_type_id.type = enbt::type::darray;
+                return dynamic_array_ref(enbt);
+            } else
                 throw enbt::exception("value is not a dynamic array");
         }
 
         static const dynamic_array_ref make_ref(const value& enbt) {
-            if (enbt.get_type() == enbt::type::array)
+            if (enbt.get_type() == enbt::type::darray)
+                return dynamic_array_ref(enbt);
+            else if (enbt.get_type() == enbt::type::array)
                 return dynamic_array_ref(enbt);
             else
                 throw enbt::exception("value is not a dynamic array");
@@ -3083,6 +3138,29 @@ namespace enbt {
         bool move_to_value_path(std::istream& read_stream, const std::string& value_path);
         value get_value_path(std::istream& read_stream, const std::string& value_path);
     }
+}
+
+namespace senbt {
+    // compound { "name": (value)}
+    // darray [...]
+    // array a[...]
+    // sarray s'def'[...]  //'def' == ub, us, ui, ul, b, s, i, l, f, d
+    // optional ?()
+    // bit true/false   t/f
+    // integer (num) / (num)(def) //def == i, I, l, L, s, S, b, B
+    // float (num)f / (num)d / (num.num)F / (num.num)D
+    // var_integer (num)v / (num)V  //v == 32, V == 64
+    // comp_integer (num)c / (num)C  //c == 32, C == 64
+    // uuid    uuid"uuid"   /   uuid'uuid' / u"uuid"  /  u'uuid'
+    // string "string"  'string'
+    // none //just empty string
+    // log_item ((item))
+    //
+    //delimiter: ,
+    enbt::value parse(std::string_view& string);
+    enbt::value parse(std::string_view string);
+    //set compressed to true if string is will be sent via network(skips formatting)
+    std::string serialize(const enbt::value& value, bool compressed = false, bool type_erasure = false);
 }
 
 namespace std {
