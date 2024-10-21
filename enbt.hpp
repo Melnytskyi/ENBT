@@ -63,6 +63,32 @@ namespace enbt {
             : std::exception("Undefined enbt exception") {}
     };
 
+    class compound_ref;
+    class compound_const_ref;
+    class fixed_array_ref;
+    class dynamic_array_ref;
+    template <class T>
+    class simple_array_const_ref;
+    using simple_array_const_ref_ui8 = simple_array_const_ref<std::uint8_t>;
+    using simple_array_const_ref_ui16 = simple_array_const_ref<std::uint16_t>;
+    using simple_array_const_ref_ui32 = simple_array_const_ref<std::uint32_t>;
+    using simple_array_const_ref_ui64 = simple_array_const_ref<std::uint64_t>;
+    using simple_array_const_ref_i8 = simple_array_const_ref<std::int8_t>;
+    using simple_array_const_ref_i16 = simple_array_const_ref<std::int16_t>;
+    using simple_array_const_ref_i32 = simple_array_const_ref<std::int32_t>;
+    using simple_array_const_ref_i64 = simple_array_const_ref<std::int64_t>;
+
+    template <class T>
+    class simple_array_ref;
+    using simple_array_ref_ui8 = simple_array_ref<std::uint8_t>;
+    using simple_array_ref_ui16 = simple_array_ref<std::uint16_t>;
+    using simple_array_ref_ui32 = simple_array_ref<std::uint32_t>;
+    using simple_array_ref_ui64 = simple_array_ref<std::uint64_t>;
+    using simple_array_ref_i8 = simple_array_ref<std::int8_t>;
+    using simple_array_ref_i16 = simple_array_ref<std::int16_t>;
+    using simple_array_ref_i32 = simple_array_ref<std::int32_t>;
+    using simple_array_ref_i64 = simple_array_ref<std::int64_t>;
+
     class compound;
     class fixed_array;
     class dynamic_array;
@@ -488,16 +514,13 @@ namespace enbt {
                 return enbt::type_len::Tiny;
         }
 
-
         value(std::uint8_t* data, std::size_t data_len, type_id data_type_id)
             : data(data), data_len(data_len), data_type_id(data_type_id) {}
 
     public:
-
         static inline value build_inline(std::uint8_t* data, std::size_t data_len, type_id data_type_id) {
             return value(data, data_len, data_type_id);
         }
-
 
         template <class T>
         value(const std::vector<T>& array) {
@@ -706,29 +729,36 @@ namespace enbt {
             return *this;
         }
 
-
         bool type_equal(type_id tid) const {
             return !(data_type_id != tid);
+        }
+
+        bool is_log_item() const {
+            return data_type_id.type == enbt::type::log_item;
+        }
+
+        bool is_string() const {
+            return data_type_id.type == enbt::type::string;
+        }
+
+        bool is_uuid() const {
+            return data_type_id.type == enbt::type::uuid;
         }
 
         bool is_compound() const {
             return data_type_id.type == enbt::type::compound;
         }
 
-        bool is_tiny_compound() const {
-            if (data_type_id.type != enbt::type::compound)
-                return false;
-            return data_type_id.is_signed;
-        }
-
-        bool is_long_compound() const {
-            if (data_type_id.type != enbt::type::compound)
-                return false;
-            return !data_type_id.is_signed;
-        }
-
         bool is_array() const {
             return data_type_id.type == enbt::type::array || data_type_id.type == enbt::type::darray;
+        }
+
+        bool is_dyn_array() const {
+            return data_type_id.type == enbt::type::darray;
+        }
+
+        bool is_fixed_array() const {
+            return data_type_id.type == enbt::type::array;
         }
 
         bool is_sarray() const {
@@ -737,6 +767,10 @@ namespace enbt {
 
         bool is_numeric() const {
             return data_type_id.type == enbt::type::integer || data_type_id.type == enbt::type::var_integer || data_type_id.type == enbt::type::comp_integer || data_type_id.type == enbt::type::floating;
+        }
+
+        bool is_bit() const {
+            return data_type_id.type == enbt::type::bit;
         }
 
         bool is_none() const {
@@ -1562,6 +1596,32 @@ namespace enbt {
         copy_interator copy_end() const {
             return copy_interator(*this, false);
         }
+
+        raw_uuid as_uuid() const;
+        const std::string& as_string() const;
+        std::string& as_string();
+        compound_ref as_compound();
+        compound_const_ref as_compound() const;
+        dynamic_array_ref as_dyn_array();
+        dynamic_array_ref as_dyn_array() const;
+        fixed_array_ref as_fixed_array();
+        fixed_array_ref as_fixed_array() const;
+        simple_array_ref_ui8 as_ui8_array();
+        simple_array_const_ref_ui8 as_ui8_array() const;
+        simple_array_ref_ui16 as_ui16_array();
+        simple_array_const_ref_ui16 as_ui16_array() const;
+        simple_array_ref_ui32 as_ui32_array();
+        simple_array_const_ref_ui32 as_ui32_array() const;
+        simple_array_ref_ui64 as_ui64_array();
+        simple_array_const_ref_ui64 as_ui64_array() const;
+        simple_array_ref_i8 as_i8_array();
+        simple_array_const_ref_i8 as_i8_array() const;
+        simple_array_ref_i16 as_i16_array();
+        simple_array_const_ref_i16 as_i16_array() const;
+        simple_array_ref_i32 as_i32_array();
+        simple_array_const_ref_i32 as_i32_array() const;
+        simple_array_ref_i64 as_i64_array();
+        simple_array_const_ref_i64 as_i64_array() const;
     };
 
     inline value to_log_item(const value& val) {
@@ -1589,37 +1649,25 @@ namespace enbt {
 }
 
 namespace enbt {
-    class compound_ref {
+    class compound_const_ref {
+        friend class compound_ref;
+
     protected:
         std::unordered_map<std::string, value>* proxy;
 
-        compound_ref(value& abstract) {
+        compound_const_ref(value& abstract) {
             proxy = std::get<std::unordered_map<std::string, value>*>(abstract.content());
         }
 
-        compound_ref(const value& abstract) {
+        compound_const_ref(const value& abstract) {
             proxy = std::get<std::unordered_map<std::string, value>*>(abstract.content());
         }
 
-        compound_ref() {
+        compound_const_ref() {
             proxy = nullptr;
         }
 
     public:
-        static compound_ref make_ref(value& enbt) {
-            if (enbt.is_compound())
-                return compound_ref(enbt);
-            else
-                throw enbt::exception("value is not a compound");
-        }
-
-        static compound_ref make_ref(const value& enbt) {
-            if (enbt.is_compound())
-                return compound_ref(enbt);
-            else
-                throw enbt::exception("value is not a compound");
-        }
-
         using hasher = std::unordered_map<std::string, value>::hasher;
         using key_type = std::unordered_map<std::string, value>::key_type;
         using mapped_type = std::unordered_map<std::string, value>::mapped_type;
@@ -1643,6 +1691,128 @@ namespace enbt {
 
         using node_type = std::unordered_map<std::string, value>::node_type;
 
+        compound_const_ref(const compound_const_ref& tag) {
+            proxy = tag.proxy;
+        }
+
+        compound_const_ref(compound_const_ref&& tag) {
+            proxy = tag.proxy;
+        }
+
+        const mapped_type& operator[](key_type&& key_val) const {
+            return proxy->operator[](std::move(key_val));
+        }
+
+        hasher hash_function() const {
+            return proxy->hash_function();
+        }
+
+        key_equal key_eq() const {
+            return proxy->key_eq();
+        }
+
+        [[nodiscard]] const mapped_type& at(const key_type& key_value) const {
+            return proxy->at(key_value);
+        }
+
+        size_type bucket(const std::string& index) const noexcept {
+            return proxy->bucket(index);
+        }
+
+        size_type bucket_count() const noexcept {
+            return proxy->bucket_count();
+        }
+
+        size_type bucket_size(size_type bucket) const noexcept {
+            return proxy->bucket_size(bucket);
+        }
+
+        bool contains(const key_type& key_value) const {
+            return proxy->contains(key_value);
+        }
+
+        size_type count(const key_type& key_value) const {
+            return proxy->count(key_value);
+        }
+
+        bool empty(const key_type& key_value) const noexcept {
+            return proxy->empty();
+        }
+
+        std::pair<const_iterator, const_iterator> equal_range(const key_type& key_value) const {
+            return proxy->equal_range(key_value);
+        }
+
+        decltype(auto) find(const key_type& key_value) const {
+            return proxy->find(key_value);
+        }
+
+        float load_factor() const noexcept {
+            return proxy->load_factor();
+        }
+
+        size_type max_bucket_count() const noexcept {
+            return proxy->max_bucket_count();
+        }
+
+        size_type max_load_factor() const noexcept {
+            return proxy->max_load_factor();
+        }
+
+        size_type max_size() const noexcept {
+            return proxy->max_size();
+        }
+
+        size_type size() const noexcept {
+            return proxy->size();
+        }
+
+        const_iterator begin() const {
+            return proxy->begin();
+        }
+
+        const_iterator end() const {
+            return proxy->end();
+        }
+
+        const_iterator cbegin() const {
+            return proxy->cbegin();
+        }
+
+        const_iterator cend() const {
+            return proxy->cend();
+        }
+    };
+
+    class compound_ref : public compound_const_ref {
+    protected:
+        compound_ref(value& abstract) {
+            proxy = std::get<std::unordered_map<std::string, value>*>(abstract.content());
+        }
+
+        compound_ref(const value& abstract) {
+            proxy = std::get<std::unordered_map<std::string, value>*>(abstract.content());
+        }
+
+        compound_ref() {
+            proxy = nullptr;
+        }
+
+    public:
+        static compound_ref make_ref(value& enbt) {
+            if (enbt.is_compound())
+                return compound_ref(enbt);
+            else
+                throw enbt::exception("value is not a compound");
+        }
+
+        static compound_const_ref make_ref(const value& enbt) {
+            if (enbt.is_compound())
+                return compound_const_ref(enbt);
+            else
+                throw enbt::exception("value is not a compound");
+        }
+
         compound_ref(const compound_ref& tag) {
             proxy = tag.proxy;
         }
@@ -1652,10 +1822,6 @@ namespace enbt {
         }
 
         mapped_type& operator[](key_type&& key_val) {
-            return proxy->operator[](std::move(key_val));
-        }
-
-        const mapped_type& operator[](key_type&& key_val) const {
             return proxy->operator[](std::move(key_val));
         }
 
@@ -1746,13 +1912,6 @@ namespace enbt {
             return proxy->insert_or_assign(hint, std::move(key_value), std::forward<T>(values));
         }
 
-        hasher hash_function() const {
-            return proxy->hash_function();
-        }
-
-        key_equal key_eq() const {
-            return proxy->key_eq();
-        }
 
         mapped_type& operator[](const key_type& key_value) {
             return proxy->operator[](key_value);
@@ -1776,28 +1935,8 @@ namespace enbt {
             return *this;
         }
 
-        size_type bucket(const std::string& index) const noexcept {
-            return proxy->bucket(index);
-        }
-
-        size_type bucket_count() const noexcept {
-            return proxy->bucket_count();
-        }
-
-        size_type bucket_size(size_type bucket) const noexcept {
-            return proxy->bucket_size(bucket);
-        }
-
         void clear() noexcept {
             proxy->clear();
-        }
-
-        bool contains(const key_type& key_value) const {
-            return proxy->contains(key_value);
-        }
-
-        size_type count(const key_type& key_value) const {
-            return proxy->count(key_value);
         }
 
         template <class... Values>
@@ -1810,9 +1949,6 @@ namespace enbt {
             return proxy->emplace_hint(where, std::forward<Values>(vals)...);
         }
 
-        bool empty(const key_type& key_value) const noexcept {
-            return proxy->empty();
-        }
 
         std::pair<iterator, iterator> equal_range(const key_type& key_value) {
             return proxy->equal_range(key_value);
@@ -1838,26 +1974,6 @@ namespace enbt {
             return proxy->find(key_value);
         }
 
-        float load_factor() const noexcept {
-            return proxy->load_factor();
-        }
-
-        size_type max_bucket_count() const noexcept {
-            return proxy->max_bucket_count();
-        }
-
-        size_type max_load_factor() const noexcept {
-            return proxy->max_load_factor();
-        }
-
-        size_type max_size() const noexcept {
-            return proxy->max_size();
-        }
-
-        size_type size() const noexcept {
-            return proxy->size();
-        }
-
         iterator begin() {
             return proxy->begin();
         }
@@ -1872,14 +1988,6 @@ namespace enbt {
 
         const_iterator end() const {
             return proxy->end();
-        }
-
-        const_iterator cbegin() const {
-            return proxy->cbegin();
-        }
-
-        const_iterator cend() const {
-            return proxy->cend();
         }
     };
 

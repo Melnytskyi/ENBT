@@ -1142,6 +1142,107 @@ namespace enbt {
             return std::optional<value>(*this);
     }
 
+    raw_uuid value::as_uuid() const {
+        return (raw_uuid) * this;
+    }
+
+    const std::string& value::as_string() const {
+        return (const std::string&)*this;
+    }
+
+    std::string& value::as_string() {
+        return (std::string&)*this;
+    }
+
+    compound_ref value::as_compound() {
+        return compound::make_ref(*this);
+    }
+
+    compound_const_ref value::as_compound() const {
+        return compound::make_ref(*this);
+    }
+
+    dynamic_array_ref value::as_dyn_array() {
+        return dynamic_array::make_ref(*this);
+    }
+
+    dynamic_array_ref value::as_dyn_array() const {
+        return dynamic_array::make_ref(*this);
+    }
+
+    fixed_array_ref value::as_fixed_array() {
+        return fixed_array::make_ref(*this);
+    }
+
+    fixed_array_ref value::as_fixed_array() const {
+        return fixed_array::make_ref(*this);
+    }
+
+    simple_array_ref_ui8 value::as_ui8_array() {
+        return simple_array_ui8::make_ref(*this);
+    }
+
+    simple_array_const_ref_ui8 value::as_ui8_array() const {
+        return simple_array_ui8::make_ref(*this);
+    }
+
+    simple_array_ref_ui16 value::as_ui16_array() {
+        return simple_array_ui16::make_ref(*this);
+    }
+
+    simple_array_const_ref_ui16 value::as_ui16_array() const {
+        return simple_array_ui16::make_ref(*this);
+    }
+
+    simple_array_ref_ui32 value::as_ui32_array() {
+        return simple_array_ui32::make_ref(*this);
+    }
+
+    simple_array_const_ref_ui32 value::as_ui32_array() const {
+        return simple_array_ui32::make_ref(*this);
+    }
+
+    simple_array_ref_ui64 value::as_ui64_array() {
+        return simple_array_ui64::make_ref(*this);
+    }
+
+    simple_array_const_ref_ui64 value::as_ui64_array() const {
+        return simple_array_ui64::make_ref(*this);
+    }
+
+    simple_array_ref_i8 value::as_i8_array() {
+        return simple_array_i8::make_ref(*this);
+    }
+
+    simple_array_const_ref_i8 value::as_i8_array() const {
+        return simple_array_i8::make_ref(*this);
+    }
+
+    simple_array_ref_i16 value::as_i16_array() {
+        return simple_array_i16::make_ref(*this);
+    }
+
+    simple_array_const_ref_i16 value::as_i16_array() const {
+        return simple_array_i16::make_ref(*this);
+    }
+
+    simple_array_ref_i32 value::as_i32_array() {
+        return simple_array_i32::make_ref(*this);
+    }
+
+    simple_array_const_ref_i32 value::as_i32_array() const {
+        return simple_array_i32::make_ref(*this);
+    }
+
+    simple_array_ref_i64 value::as_i64_array() {
+        return simple_array_i64::make_ref(*this);
+    }
+
+    simple_array_const_ref_i64 value::as_i64_array() const {
+        return simple_array_i64::make_ref(*this);
+    }
+
+
     std::pair<std::string, value> value::copy_interator::operator*() const {
         switch (iterate_type.type) {
         case type::sarray:
