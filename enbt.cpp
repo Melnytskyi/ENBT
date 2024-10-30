@@ -1162,6 +1162,14 @@ namespace enbt {
         return compound::make_ref(*this);
     }
 
+    dynamic_array_ref value::as_array() {
+        return dynamic_array::make_ref(*this);
+    }
+
+    dynamic_array_ref value::as_array() const {
+        return dynamic_array::make_ref(*this);
+    }
+
     dynamic_array_ref value::as_dyn_array() {
         return dynamic_array::make_ref(*this);
     }
@@ -1241,7 +1249,6 @@ namespace enbt {
     simple_array_const_ref_i64 value::as_i64_array() const {
         return simple_array_i64::make_ref(*this);
     }
-
 
     std::pair<std::string, value> value::copy_interator::operator*() const {
         switch (iterate_type.type) {
@@ -2272,23 +2279,6 @@ namespace enbt {
 namespace senbt {
     enbt::value parse_(std::string_view& string);
 
-    // compound { "name": (value)}
-    // darray [...]
-    // array a[...]
-    // sarray s'def'[...]  //'def' == ub, us, ui, ul, b, s, i, l
-    // optional ?()
-    // bit true/false   t/f
-    // integer (num) / (num)(def) //def == i, I, l, L, s, S, b, B
-    // float (num)f / (num)d / (num.num)F / (num.num)D
-    // var_integer (num)v / (num)V  //v == 32, V == 64
-    // comp_integer (num)c / (num)C  //c == 32, C == 64
-    // uuid    uuid"uuid"   /   uuid'uuid' / u"uuid"  /  u'uuid'
-    // string "string"  'string'
-    // none //just empty string
-    // log_item ((item))
-    //
-    //delimiter: ,
-
     std::string_view consume(std::string_view& string) {
         auto pos = string.find_first_of(" \t\n\r,})]");
         if (pos == std::string_view::npos) {
@@ -2303,9 +2293,24 @@ namespace senbt {
     }
 
     void skip_empty(std::string_view& string) {
-        auto pos = string.find_first_not_of(" \t\r\b\n");
-        if (pos != std::string_view::npos)
-            string = string.substr(pos);
+        while (true) {
+            auto pos = string.find_first_not_of(" \t\r\b\n");
+            if (pos != std::string_view::npos)
+                string = string.substr(pos);
+            if (string.starts_with("//")) {
+                auto pos = string.find_first_of('\n');
+                if (pos != std::string_view::npos)
+                    string = string.substr(pos);
+                continue;
+            }
+            if (string.starts_with("/*")) {
+                auto pos = string.find("*/");
+                if (pos != std::string_view::npos)
+                    string = string.substr(pos + 2);
+                continue;
+            }
+            break;
+        }
     }
 
     uint64_t parse_numeric_part(std::string_view string) {
@@ -2746,11 +2751,11 @@ namespace senbt {
         }
     }
 
-    enbt::value parse(std::string_view& string) {
+    enbt::value parse(std::string_view string) {
         return parse_(string);
     }
 
-    enbt::value parse(std::string_view string) {
+    enbt::value parse_mod(std::string_view& string) {
         return parse_(string);
     }
 
@@ -3010,7 +3015,7 @@ namespace senbt {
             break;
         }
         case enbt::type::compound: {
-            auto compound = enbt::compound::make_ref(value);
+            auto compound = value.as_compound();
             if (compound.size()) {
                 if (!compress)
                     spaces.push_back('\t');

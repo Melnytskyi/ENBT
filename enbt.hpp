@@ -1,6 +1,6 @@
 #pragma once
-#ifndef SRC_LIBRARY_ENBT_ENBT
-    #define SRC_LIBRARY_ENBT_ENBT
+#ifndef ENBT
+    #define ENBT 1.1
     #include <algorithm>
     #include <any>
     #include <bit>
@@ -1602,6 +1602,8 @@ namespace enbt {
         std::string& as_string();
         compound_ref as_compound();
         compound_const_ref as_compound() const;
+        dynamic_array_ref as_array();
+        dynamic_array_ref as_array() const;
         dynamic_array_ref as_dyn_array();
         dynamic_array_ref as_dyn_array() const;
         fixed_array_ref as_fixed_array();
@@ -1651,6 +1653,7 @@ namespace enbt {
 namespace enbt {
     class compound_const_ref {
         friend class compound_ref;
+        friend class compound;
 
     protected:
         std::unordered_map<std::string, value>* proxy;
@@ -1997,6 +2000,7 @@ namespace enbt {
         std::vector<value>* proxy;
         bool as_const = false;
 
+        friend class fixed_array;
         fixed_array_ref(value& abstract) {
             proxy = std::get<std::vector<value>*>(abstract.content());
             as_const = false;
@@ -2175,6 +2179,7 @@ namespace enbt {
     class dynamic_array_ref {
     protected:
         std::vector<value>* proxy;
+        friend class dynamic_array;
 
         dynamic_array_ref(const value& abstract) {
             proxy = std::get<std::vector<value>*>(abstract.content());
@@ -2413,10 +2418,15 @@ namespace enbt {
     };
 
     template <class T>
+    class simple_array;
+
+    template <class T>
     class simple_array_const_ref {
     protected:
         T* proxy;
         std::size_t size_;
+
+        friend class simple_array<T>;
 
         static constexpr enbt::type_len type_len = []() constexpr {
             if (sizeof(T) == 1)
@@ -2522,6 +2532,8 @@ namespace enbt {
     protected:
         T* proxy;
         std::size_t size_;
+
+        friend class simple_array<T>;
 
         static constexpr enbt::type_len type_len = []() constexpr {
             if (sizeof(T) == 1)
@@ -2685,6 +2697,16 @@ namespace enbt {
             proxy = std::get<std::unordered_map<std::string, value>*>(holder.content());
         }
 
+        compound(compound_ref ref)
+            : holder(*ref.proxy) {
+            proxy = std::get<std::unordered_map<std::string, value>*>(holder.content());
+        }
+
+        compound(compound_const_ref ref)
+            : holder(*ref.proxy) {
+            proxy = std::get<std::unordered_map<std::string, value>*>(holder.content());
+        }
+
         compound& operator=(const value& copy) {
             if (!copy.is_compound())
                 throw enbt::exception("value is not a compound");
@@ -2766,6 +2788,13 @@ namespace enbt {
             proxy = std::get<std::vector<value>*>(holder.content());
         }
 
+        fixed_array(fixed_array_ref ref)
+            : holder(*ref.proxy, ref.fixed_type) {
+            proxy = std::get<std::vector<value>*>(holder.content());
+            fixed_type = ref.fixed_type;
+        }
+
+
         fixed_array& operator=(const fixed_array& copy) {
             holder = copy.holder;
             proxy = std::get<std::vector<value>*>(holder.content());
@@ -2845,6 +2874,11 @@ namespace enbt {
             proxy = std::get<std::vector<value>*>(holder.content());
         }
 
+        dynamic_array(dynamic_array_ref ref)
+            : holder(*ref.proxy) {
+            proxy = std::get<std::vector<value>*>(holder.content());
+        }
+
         dynamic_array& operator=(const value& copy) {
             if (copy.get_type() != enbt::type::darray)
                 throw enbt::exception("value is not a dynamic array");
@@ -2911,7 +2945,7 @@ namespace enbt {
             : simple_array(arr, arr + arr_size) {}
 
         simple_array(const T* begin, const T* end)
-            : simple_array(end - begin) {
+            : simple_array(size_t(end - begin)) {
             std::size_t i = 0;
             for (auto it = begin; it != end; ++it)
                 simple_array_ref<T>::proxy[i++] = *it;
@@ -2933,6 +2967,18 @@ namespace enbt {
             : holder(std::move(move.holder)) {
             simple_array_ref<T>::proxy = std::get<T*>(holder.content());
             simple_array_ref<T>::size_ = holder.size();
+        }
+
+        simple_array(simple_array_ref<T> ref)
+            : holder(*ref.proxy, ref.size_) {
+            simple_array_ref<T>::proxy = std::get<std::vector<value>*>(holder.content());
+            simple_array_ref<T>::size_ = ref.size_;
+        }
+
+        simple_array(simple_array_const_ref<T> ref)
+            : holder(*ref.proxy, ref.size_) {
+            simple_array_ref<T>::proxy = std::get<std::vector<value>*>(holder.content());
+            simple_array_ref<T>::size_ = ref.size_;
         }
 
         simple_array& operator=(const simple_array& copy) {
@@ -3265,8 +3311,12 @@ namespace senbt {
     // log_item ((item))
     //
     //delimiter: ,
-    enbt::value parse(std::string_view& string);
+    //one line comments and multiline comments allowed( // and /**/ )
     enbt::value parse(std::string_view string);
+
+    //consumes senbt part from string and returns enbt value
+    enbt::value parse_mod(std::string_view& string);
+
     //set compressed to true if string is will be sent via network(skips formatting)
     std::string serialize(const enbt::value& value, bool compressed = false, bool type_erasure = false);
 }
@@ -3283,7 +3333,7 @@ namespace std {
     };
 }
 
-#endif /* SRC_LIBRARY_ENBT_ENBT */
+#endif /* ENBT */
 
 
 // value Example file
