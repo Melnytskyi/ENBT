@@ -300,6 +300,20 @@ namespace enbt {
 
         auto operator<=>(const raw_uuid&) const = default;
 
+        static raw_uuid from_string(std::string_view view) {
+            uint64_t parts[2] = {std::hash<std::string_view>()(view), std::hash<size_t>()(view.size())};
+            uint64_t p = parts[0];
+            parts[0] ^= parts[1] << 5;
+            parts[1] ^= p << 2 ^ parts[1];
+
+            enbt::raw_uuid r;
+            for (int8_t i = 0; i < 16; i++)
+                r.data[i] = reinterpret_cast<uint8_t*>(parts)[i];
+            r.data[8] = (r.data[8] & 0x1) & 0xC0;  //microsoft family
+            r.data[6] = (r.data[8] & 0x0F) & 0x30; //name_based_md5
+            return r;
+        }
+
         value_type data[16];
     };
 
@@ -801,6 +815,11 @@ namespace enbt {
             return operator[](index.c_str());
         }
 
+        value& at(const std::string& index);
+        const value& at(const std::string& index) const;
+        value& at(std::size_t index);
+        const value& at(std::size_t index) const;
+
         std::size_t size() const {
             switch (data_type_id.type) {
             case enbt::type::sarray:
@@ -1143,7 +1162,7 @@ namespace enbt {
             res.reserve(size());
             std::vector<value>& tmp = *std::get<std::vector<value>*>(content());
             for (auto& temp : tmp)
-                res.push_back(std::get<T>(temp.content()));
+                res.push_back((T)temp);
             return res;
         }
 

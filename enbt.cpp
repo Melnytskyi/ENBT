@@ -791,6 +791,32 @@ namespace enbt {
         throw std::invalid_argument("Invalid tid, cannot index compound");
     }
 
+    value& value::at(const std::string& index) {
+        if (is_compound()) {
+            return ((std::unordered_map<std::string, value>*)data)->at(index);
+        }
+        throw std::invalid_argument("Invalid tid, cannot index compound");
+    }
+
+    const value& value::at(const std::string& index) const {
+        if (is_compound()) {
+            return ((std::unordered_map<std::string, value>*)data)->at(index);
+        }
+        throw std::invalid_argument("Invalid tid, cannot index compound");
+    }
+
+    value& value::at(std::size_t index) {
+        if (is_array())
+            return ((std::vector<value>*)data)->at(index);
+        throw std::invalid_argument("Invalid tid, cannot index array");
+    }
+
+    const value& value::at(std::size_t index) const {
+        if (is_array())
+            return ((std::vector<value>*)data)->at(index);
+        throw std::invalid_argument("Invalid tid, cannot index array");
+    }
+
     value value::get_index(std::size_t index) const {
         if (is_sarray()) {
             if (data_len <= index)
