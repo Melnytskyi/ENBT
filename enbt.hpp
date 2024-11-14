@@ -210,19 +210,19 @@ namespace enbt {
         using difference_type = std::ptrdiff_t;
         using size_type = std::size_t;
 
-        iterator begin() noexcept {
+        constexpr iterator begin() noexcept {
             return data;
         }
 
-        const_iterator begin() const noexcept {
+        constexpr const_iterator begin() const noexcept {
             return data;
         }
 
-        iterator end() noexcept {
+        constexpr iterator end() noexcept {
             return data + size();
         }
 
-        const_iterator end() const noexcept {
+        constexpr const_iterator end() const noexcept {
             return data + size();
         }
 
@@ -237,6 +237,11 @@ namespace enbt {
             microsoft = 2,
             future = 3,
         };
+
+        constexpr bool is_null() const noexcept {
+            return data[0] | data[1] | data[2] | data[3] | data[4] | data[5] | data[6] | data[7]
+                   | data[8] | data[9] | data[10] | data[11] | data[12] | data[13] | data[14] | data[15];
+        }
 
         family_t family() const noexcept {
             auto octet7 = data[8];
@@ -313,6 +318,13 @@ namespace enbt {
             r.data[6] = (r.data[8] & 0x0F) & 0x30; //name_based_md5
             return r;
         }
+
+        static raw_uuid generate_v4();
+
+        static raw_uuid generate_v7();
+
+        static raw_uuid as_null();
+
 
         value_type data[16];
     };

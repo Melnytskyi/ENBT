@@ -1,8 +1,45 @@
 #include "enbt.hpp"
+#include <chrono>
+#include <random>
 #include <sstream>
 #pragma region value constructors
 
 namespace enbt {
+
+    raw_uuid raw_uuid::generate_v4() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 255);
+        raw_uuid uuid;
+        for (std::size_t i = 0; i < 16; i++)
+            uuid.data[i] = dis(gen);
+        uuid.data[6] = (uuid.data[6] & 0x0F) | 0x40;
+        uuid.data[8] = (uuid.data[8] & 0x3F) | 0x80;
+        return uuid;
+    }
+
+    raw_uuid raw_uuid::generate_v7() {
+        auto current_time = std::chrono::system_clock::now().time_since_epoch().count() / 1000;
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 255);
+        raw_uuid uuid;
+        for (std::size_t i = 4; i < 16; i++)
+            uuid.data[i] = dis(gen);
+        uuid.data[6] = (uuid.data[6] & 0x0F) | 0x70;
+        uuid.data[8] = (uuid.data[8] & 0x3F) | 0x80;
+        uuid.data[3] = (current_time >> 24) & 0xFF;
+        uuid.data[2] = (current_time >> 16) & 0xFF;
+        uuid.data[1] = (current_time >> 8) & 0xFF;
+        uuid.data[0] = current_time & 0xFF;
+        return uuid;
+    }
+
+    raw_uuid raw_uuid::as_null() {
+        return raw_uuid{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    }
+
     value::value() {
         data = nullptr;
         data_len = 0;
