@@ -2170,6 +2170,10 @@ namespace enbt {
             proxy->erase(proxy->begin() + index);
         }
 
+        void reserve(std::size_t count) {
+            proxy->reserve(count);
+        }
+
         std::size_t size() const {
             return proxy->size();
         }
