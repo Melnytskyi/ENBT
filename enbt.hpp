@@ -1,13 +1,11 @@
 #pragma once
 #ifndef ENBT
     #define ENBT 1.1
-    #include <algorithm>
     #include <any>
     #include <bit>
     #include <cstdint>
     #include <exception>
     #include <initializer_list>
-    #include <istream>
     #include <optional>
     #include <string>
     #include <unordered_map>
@@ -19,10 +17,7 @@
 
 namespace enbt {
     namespace endian_helpers {
-        inline void endian_swap(void* value_ptr, std::size_t len) {
-            std::byte* prox = static_cast<std::byte*>(value_ptr);
-            std::reverse(prox, prox + len);
-        }
+        void endian_swap(void* value_ptr, std::size_t len);
 
         inline void convert_endian(std::endian value_endian, void* value_ptr, std::size_t len) {
             if (std::endian::native != value_endian)
@@ -147,6 +142,8 @@ namespace enbt {
         Default,
         Long
     };
+
+    enbt::type_len calc_type_len(std::size_t len);
 
     union type_id {
         struct {
@@ -335,11 +332,14 @@ namespace enbt {
         friend class fixed_array_ref;
         friend class dynamic_array_ref;
 
-        template <typename T, typename Enable = void>
-        struct is_optional : std::false_type {};
+        template <class T, class Enable = void>
+        struct __is_optional : std::false_type {};
 
-        template <typename T>
-        struct is_optional<std::optional<T>> : std::true_type {};
+        template <class T>
+        struct __is_optional<std::optional<T>> : std::true_type {};
+
+        template <>
+        struct __is_optional<optional> : std::true_type {};
 
     public:
         typedef std::variant<
@@ -529,17 +529,6 @@ namespace enbt {
             return size;
         }
 
-        enbt::type_len calc_len(std::size_t len) {
-            if (len > UINT32_MAX)
-                return enbt::type_len::Long;
-            else if (len > UINT16_MAX)
-                return enbt::type_len::Default;
-            else if (len > UINT8_MAX)
-                return enbt::type_len::Short;
-            else
-                return enbt::type_len::Tiny;
-        }
-
         value(std::uint8_t* data, std::size_t data_len, type_id data_type_id)
             : data(data), data_len(data_len), data_type_id(data_type_id) {}
 
@@ -727,10 +716,10 @@ namespace enbt {
 
         template <class Ty>
         value& operator=(const Ty& set_value) {
-            using T = std::remove_cvref_t<Ty>;
+            using T = std::decay_t<Ty>;
             if constexpr (std::is_same<T, value_variants>().value)
                 operator=(value(set_value, data_type_id, data_len, data_type_id.endian));
-            else if constexpr (is_optional<T>::value) {
+            else if constexpr (__is_optional<T>::value) {
                 if (set_value.has_value())
                     operator=(value(true, *set_value));
                 else
@@ -742,10 +731,10 @@ namespace enbt {
 
         template <class Ty>
         value& operator=(Ty&& set_value) {
-            using T = std::remove_cvref_t<Ty>;
+            using T = std::decay_t<Ty>;
             if constexpr (std::is_same<T, value_variants>().value)
                 operator=(value(set_value, data_type_id, data_len, data_type_id.endian));
-            else if constexpr (is_optional<T>::value) {
+            else if constexpr (__is_optional<T>::value) {
                 if (set_value.has_value())
                     operator=(value(true, *set_value));
                 else
@@ -801,6 +790,10 @@ namespace enbt {
 
         bool is_none() const {
             return data_type_id.type == enbt::type::none;
+        }
+
+        bool is_optional() const {
+            return data_type_id.type == enbt::type::optional;
         }
 
         value& operator[](std::size_t index);
@@ -3264,96 +3257,6 @@ namespace enbt {
             return std::move(holder);
         }
     };
-
-    namespace io_helper {
-        void write_compress_len(std::ostream& write_stream, std::uint64_t len);
-        void write_type_id(std::ostream& write_stream, enbt::type_id tid);
-        void write_string(std::ostream& write_stream, const value& val);
-        void write_define_len(std::ostream& write_stream, std::uint64_t len, enbt::type_id tid);
-        void initialize_version(std::ostream& write_stream);
-        void write_compound(std::ostream& write_stream, const value& val);
-        void write_array(std::ostream& write_stream, const value& val);
-        void write_darray(std::ostream& write_stream, const value& val);
-        void write_simple_array(std::ostream& write_stream, const value& val);
-        void write_log_item(std::ostream& write_stream, const value& val);
-        void write_value(std::ostream& write_stream, const value& val);
-        void write_token(std::ostream& write_stream, const value& val);
-
-
-        enbt::type_id read_type_id(std::istream& read_stream);
-        std::size_t read_define_len(std::istream& read_stream, enbt::type_id tid);
-        std::uint64_t read_define_len64(std::istream& read_stream, enbt::type_id tid);
-        std::uint64_t read_compress_len(std::istream& read_stream);
-
-        std::string read_string(std::istream& read_stream);
-        value read_compound(std::istream& read_stream, enbt::type_id tid);
-        std::vector<value> read_array(std::istream& read_stream, enbt::type_id tid);
-        std::vector<value> read_darray(std::istream& read_stream, enbt::type_id tid);
-        value read_sarray(std::istream& read_stream, enbt::type_id tid);
-        value read_log_item(std::istream& read_stream);
-        value read_value(std::istream& read_stream, enbt::type_id tid);
-        value read_token(std::istream& read_stream);
-
-        value read_file(std::istream& read_stream);
-        std::vector<value> read_list_file(std::istream& read_stream);
-
-        void check_version(std::istream& read_stream);
-
-
-        //return zero if cannot, else return type size
-        std::uint8_t can_fast_index(enbt::type_id tid);
-
-        void skip_compound(std::istream& read_stream, enbt::type_id tid);
-        void skip_array(std::istream& read_stream, enbt::type_id tid);
-        void skip_darray(std::istream& read_stream, enbt::type_id tid);
-        void skip_sarray(std::istream& read_stream, enbt::type_id tid);
-        void skip_string(std::istream& read_stream);
-        void skip_log_item(std::istream& read_stream);
-        void skip_value(std::istream& read_stream, enbt::type_id tid);
-        void skip_token(std::istream& read_stream);
-
-
-        //move read stream cursor to value in compound, return true if value found
-        bool find_value_compound(std::istream& read_stream, enbt::type_id tid, const std::string& key);
-        void index_static_array(std::istream& read_stream, std::uint64_t index, std::uint64_t len, enbt::type_id target_id);
-        void index_dyn_array(std::istream& read_stream, std::uint64_t index, std::uint64_t len);
-        void index_array(std::istream& read_stream, std::uint64_t index, enbt::type_id arr_tid);
-        void index_array(std::istream& read_stream, std::uint64_t index);
-
-        //move read_stream cursor to value,
-        //value_path similar: "0/the test/4/54",
-        //return success status
-        //can throw enbt::exception
-        bool move_to_value_path(std::istream& read_stream, const std::string& value_path);
-        value get_value_path(std::istream& read_stream, const std::string& value_path);
-    }
-}
-
-namespace senbt {
-    // compound { "name": (value)}
-    // darray [...]
-    // array a[...]
-    // sarray s'def'[...]  //'def' == ub, us, ui, ul, b, s, i, l, f, d
-    // optional ?()
-    // bit true/false   t/f
-    // integer (num) / (num)(def) //def == i, I, l, L, s, S, b, B
-    // float (num)f / (num)d / (num.num)F / (num.num)D
-    // var_integer (num)v / (num)V  //v == 32, V == 64
-    // comp_integer (num)c / (num)C  //c == 32, C == 64
-    // uuid    uuid"uuid"   /   uuid'uuid' / u"uuid"  /  u'uuid'
-    // string "string"  'string'
-    // none //just empty string
-    // log_item ((item))
-    //
-    //delimiter: ,
-    //one line comments and multiline comments allowed( // and /**/ )
-    enbt::value parse(std::string_view string);
-
-    //consumes senbt part from string and returns enbt value
-    enbt::value parse_mod(std::string_view& string);
-
-    //set compressed to true if string is will be sent via network(skips formatting)
-    std::string serialize(const enbt::value& value, bool compressed = false, bool type_erasure = false);
 }
 
 namespace std {
