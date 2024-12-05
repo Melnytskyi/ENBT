@@ -920,6 +920,12 @@ namespace enbt {
             return false;
         }
 
+        value& merge(const value& copy) &;
+        value& merge(value&& move) &;
+
+        value merge(const value& copy) &&;
+        value merge(value&& move) &&;
+
         enbt::type get_type() const {
             return data_type_id.type;
         }
@@ -1856,6 +1862,11 @@ namespace enbt {
             proxy->swap(swap_value);
         }
 
+        compound_ref merge(const value& copy) &;
+        compound_ref merge(value&& move) &;
+        compound_ref merge(const std::unordered_map<std::string, value>& copy) &;
+        compound_ref merge(std::unordered_map<std::string, value>&& move) &;
+
         template <class T>
         std::pair<iterator, bool> insert(T&& value) {
             return proxy->insert(std::forward<T>(value));
@@ -2770,6 +2781,11 @@ namespace enbt {
         bool operator!=(const compound& tag) const {
             return holder != tag.holder;
         }
+
+        compound merge(const value& copy) &&;
+        compound merge(value&& move) &&;
+        compound merge(const std::unordered_map<std::string, value>& copy) &&;
+        compound merge(std::unordered_map<std::string, value>&& move) &&;
 
         explicit operator value&() & {
             return holder;

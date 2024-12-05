@@ -873,6 +873,36 @@ namespace enbt {
         throw std::invalid_argument("Invalid tid, cannot index array");
     }
 
+    void merge_compounds(std::unordered_map<std::string, value>& left, const std::unordered_map<std::string, value>& right) {
+        for (auto& [name, val] : right)
+            left[name] = val;
+    }
+
+    void merge_compounds(std::unordered_map<std::string, value>& left, std::unordered_map<std::string, value>&& right) {
+        for (auto& [name, val] : right)
+            left[name] = std::move(val);
+    }
+
+    value& value::merge(const value& copy) & {
+        merge_compounds(*(std::unordered_map<std::string, value>*)data, *(std::unordered_map<std::string, value>*)copy.data);
+        return *this;
+    }
+
+    value& value::merge(value&& move) & {
+        merge_compounds(*(std::unordered_map<std::string, value>*)data, std::move(*(std::unordered_map<std::string, value>*)move.data));
+        return *this;
+    }
+
+    value value::merge(const value& copy) && {
+        merge_compounds(*(std::unordered_map<std::string, value>*)data, *(std::unordered_map<std::string, value>*)copy.data);
+        return std::move(*this);
+    }
+
+    value value::merge(value&& move) && {
+        merge_compounds(*(std::unordered_map<std::string, value>*)data, std::move(*(std::unordered_map<std::string, value>*)move.data));
+        return std::move(*this);
+    }
+
     value value::get_index(std::size_t index) const {
         if (is_sarray()) {
             if (data_len <= index)
@@ -1383,6 +1413,46 @@ namespace enbt {
         }
         }
         throw exception("Unreachable exception in non debug environment");
+    }
+
+    compound_ref compound_ref::merge(const value& copy) & {
+        merge_compounds(*proxy, *copy.as_compound().proxy);
+        return *this;
+    }
+
+    compound_ref compound_ref::merge(value&& move) & {
+        merge_compounds(*proxy, std::move(*move.as_compound().proxy));
+        return *this;
+    }
+
+    compound_ref compound_ref::merge(const std::unordered_map<std::string, value>& copy) & {
+        merge_compounds(*proxy, copy);
+        return *this;
+    }
+
+    compound_ref compound_ref::merge(std::unordered_map<std::string, value>&& move) & {
+        merge_compounds(*proxy, std::move(move));
+        return *this;
+    }
+
+    compound compound::merge(const value& copy) && {
+        merge_compounds(*proxy, *copy.as_compound().proxy);
+        return std::move(*this);
+    }
+
+    compound compound::merge(value&& copy) && {
+        merge_compounds(*proxy, std::move(*copy.as_compound().proxy));
+        return std::move(*this);
+    }
+
+    compound compound::merge(const std::unordered_map<std::string, value>& copy) && {
+        merge_compounds(*proxy, copy);
+        return std::move(*this);
+    }
+
+    compound compound::merge(std::unordered_map<std::string, value>&& copy) && {
+        merge_compounds(*proxy, std::move(copy));
+        return std::move(*this);
     }
 
     namespace io_helper {
