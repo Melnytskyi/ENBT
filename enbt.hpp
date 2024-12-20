@@ -155,36 +155,36 @@ namespace enbt {
 
         std::uint8_t raw;
 
-        std::endian get_endian() const {
+        constexpr std::endian get_endian() const {
             if (endian == enbt::endian::big)
                 return std::endian::big;
             else
                 return std::endian::little;
         }
 
-        bool operator!=(type_id cmp) const {
+        constexpr bool operator!=(type_id cmp) const {
             return !operator==(cmp);
         }
 
-        bool operator==(type_id cmp) const {
+        constexpr bool operator==(type_id cmp) const {
             return type == cmp.type && length == cmp.length && endian == cmp.endian && is_signed == cmp.is_signed;
         }
 
-        type_id(enbt::type ty = enbt::type::none, enbt::type_len lt = enbt::type_len::Tiny, enbt::endian en = enbt::endian::native, bool sign = false) {
+        constexpr type_id(enbt::type ty = enbt::type::none, enbt::type_len lt = enbt::type_len::Tiny, enbt::endian en = enbt::endian::native, bool sign = false) {
             type = ty;
             length = lt;
             endian = en;
             is_signed = sign;
         }
 
-        type_id(enbt::type ty, enbt::type_len lt, std::endian en, bool sign = false) {
+        constexpr type_id(enbt::type ty, enbt::type_len lt, std::endian en, bool sign = false) {
             type = ty;
             length = lt;
             endian = (enbt::endian)en;
             is_signed = sign;
         }
 
-        type_id(enbt::type ty, enbt::type_len lt, bool sign) {
+        constexpr type_id(enbt::type ty, enbt::type_len lt, bool sign) {
             type = ty;
             length = lt;
             endian = enbt::endian::native;
@@ -240,7 +240,7 @@ namespace enbt {
                    | data[8] | data[9] | data[10] | data[11] | data[12] | data[13] | data[14] | data[15];
         }
 
-        family_t family() const noexcept {
+        constexpr family_t family() const noexcept {
             auto octet7 = data[8];
             if ((octet7 & 0x80) == 0x00)
                 return family_t::ncs;
@@ -274,7 +274,7 @@ namespace enbt {
             v8 = custom,
         };
 
-        version_t version() const noexcept {
+        constexpr version_t version() const noexcept {
             auto octet9 = data[6];
             if ((octet9 & 0xF0) == 0x10)
                 return version_t::time_based;
@@ -296,11 +296,11 @@ namespace enbt {
                 return version_t::unknown;
         }
 
-        void swap(raw_uuid& rhs) noexcept {
+        constexpr void swap(raw_uuid& rhs) noexcept {
             std::swap(data, rhs.data);
         }
 
-        auto operator<=>(const raw_uuid&) const = default;
+        constexpr auto operator<=>(const raw_uuid&) const = default;
 
         static raw_uuid from_string(std::string_view view) {
             uint64_t parts[2] = {std::hash<std::string_view>()(view), std::hash<size_t>()(view.size())};
@@ -2977,6 +2977,7 @@ namespace enbt {
         value holder;
 
     public:
+        static constexpr enbt::type_id enbt_type = enbt::type_id(enbt::type::sarray, simple_array_ref<T>::type_len, std::is_signed_v<T>);
         simple_array(std::initializer_list<T> list)
             : simple_array(list.size()) {
             std::size_t i = 0;
@@ -2996,7 +2997,7 @@ namespace enbt {
         }
 
         simple_array(std::size_t array_size)
-            : holder(enbt::type_id(enbt::type::sarray, simple_array_ref<T>::type_len, std::is_signed_v<T>), array_size) {
+            : holder(enbt_type, array_size) {
             simple_array_ref<T>::proxy = std::get<T*>(holder.content());
             simple_array_ref<T>::size_ = holder.size();
         }

@@ -2539,8 +2539,17 @@ namespace enbt {
             std::function<void(std::string_view name, value_read_stream& self)> compound,
             std::function<void(value_read_stream& self)> array_or_log_item
         ) {
+            blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
+        }
+
+        void value_read_stream::blind_iterate(
+            std::function<void(std::uint64_t)> size_callback,
+            std::function<void(std::string_view name, value_read_stream& self)> compound,
+            std::function<void(value_read_stream& self)> array_or_log_item
+        ) {
             if (current_type_id.type == enbt::type::compound) {
                 std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                size_callback(len);
                 for (std::uint64_t i = 0; i < len; i++) {
                     auto name = read_string(read_stream);
                     value_read_stream stream(read_stream);
@@ -2548,19 +2557,24 @@ namespace enbt {
                 }
             } else if (current_type_id.type == enbt::type::array) {
                 std::uint64_t len = read_define_len64(read_stream, current_type_id);
-                auto target_id = read_type_id(read_stream);
-                for (std::uint64_t i = 0; i < len; i++) {
-                    value_read_stream stream(read_stream, target_id);
-                    array_or_log_item(stream);
+                size_callback(len);
+                if (len) {
+                    auto target_id = read_type_id(read_stream);
+                    for (std::uint64_t i = 0; i < len; i++) {
+                        value_read_stream stream(read_stream, target_id);
+                        array_or_log_item(stream);
+                    }
                 }
             } else if (current_type_id.type == enbt::type::darray) {
                 std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                size_callback(len);
                 for (std::uint64_t i = 0; i < len; i++) {
                     value_read_stream stream(read_stream);
                     array_or_log_item(stream);
                 }
             } else if (current_type_id.type == enbt::type::sarray) {
                 std::uint64_t len = read_compress_len(read_stream);
+                size_callback(len);
                 for (std::uint64_t i = 0; i < len; i++) {
                     value_read_stream stream(read_stream, enbt::type_id(enbt::type::integer, current_type_id.length, current_type_id.endian, current_type_id.is_signed));
                     array_or_log_item(stream);
@@ -2568,79 +2582,151 @@ namespace enbt {
             } else if (current_type_id.type == enbt::type::log_item) {
                 read_compress_len(read_stream);
                 value_read_stream stream(read_stream);
+                size_callback(1);
                 array_or_log_item(stream);
             } else
                 throw std::invalid_argument("non iterable type");
         }
 
-        value_write_stream::darray::darray(std::ostream& write_stream)
-            : write_stream(write_stream), type_size_field_pos(write_stream.tellp()) {
-            write_stream.write("\0\0\0\0\0\0\0\0\0", 9); //typeid + len
+        value_write_stream::darray::darray(std::ostream& write_stream, bool write_type_id)
+            : write_stream(write_stream), type_id_written(write_type_id) {
+            if (write_type_id) {
+                write_stream.write("\0\0\0\0\0\0\0\0\0", 9); //typeid + len
+                type_size_field_pos = write_stream.tellp();
+                type_size_field_pos -= 9;
+            } else {
+                write_stream.write("\0\0\0\0\0\0\0\0", 8);
+                type_size_field_pos = write_stream.tellp();
+                type_size_field_pos -= 8;
+            }
         }
 
         value_write_stream::darray::~darray() {
             auto pos = write_stream.tellp();
             write_stream.seekp(type_size_field_pos);
             auto typ = enbt::type_id(enbt::type::darray, enbt::type_len::Long);
-            write_type_id(write_stream, typ);
-            write_define_len(write_stream, items);
+            if (type_id_written)
+                write_type_id(write_stream, typ);
+            write_define_len(write_stream, (uint64_t)items);
             write_stream.seekp(pos);
         }
 
-        void value_write_stream::darray::write(const enbt::value& value) {
+        value_write_stream::darray& value_write_stream::darray::write(const enbt::value& value) {
             write_token(write_stream, value);
             items++;
+            return *this;
         }
 
-        void value_write_stream::darray::write(const std::function<void(value_write_stream& inner)>& fn) {
+        value_write_stream::darray& value_write_stream::darray::write(const std::function<void(value_write_stream& inner)>& fn) {
             value_write_stream inner(write_stream);
             fn(inner);
             items++;
+            return *this;
         }
 
-        value_write_stream::compound::compound(std::ostream& write_stream)
-            : write_stream(write_stream), type_size_field_pos(write_stream.tellp()) {
-            write_stream.write("\0\0\0\0\0\0\0\0\0", 9); //typeid + len
+        value_write_stream::array::array(std::ostream& write_stream, size_t size, bool write_type_id_)
+            : write_stream(write_stream), items_to_write(size) {
+            enbt::type_id type(enbt::type::array, enbt::calc_type_len(size));
+            if (write_type_id_)
+                write_type_id(write_stream, type);
+            write_define_len(write_stream, size, type);
+        }
+
+        value_write_stream::array::~array() {}
+
+        value_write_stream::array& value_write_stream::array::write(const enbt::value& it) {
+            if (items_to_write == 0)
+                throw std::invalid_argument("array is full");
+            if (!type_set) {
+                current_type_id = it.type_id();
+                write_type_id(write_stream, current_type_id);
+                type_set = true;
+            }
+            write_value(write_stream, it);
+            items_to_write--;
+            return *this;
+        }
+
+        void value_write_stream::array::write(const std::function<void(value_write_stream& inner)>& fn) {
+            if (items_to_write == 0)
+                throw std::invalid_argument("array is full");
+            auto pos = write_stream.tellp();
+            value_write_stream inner(write_stream, !type_set);
+            fn(inner);
+            if (!type_set) {
+                current_type_id = inner.get_written_type_id();
+                type_set = true;
+            } else if (inner.get_written_type_id() != current_type_id) {
+                write_stream.seekp(pos);
+                throw enbt::exception("array type mismatch");
+            }
+            items_to_write--;
+        }
+
+        value_write_stream::compound::compound(std::ostream& write_stream, bool set_type_id)
+            : write_stream(write_stream), type_id_written(set_type_id) {
+            if (set_type_id) {
+                write_stream.write("\0\0\0\0\0\0\0\0\0", 9); //typeid + len
+                type_size_field_pos = write_stream.tellp();
+                type_size_field_pos -= 9;
+            } else {
+                write_stream.write("\0\0\0\0\0\0\0\0", 8);
+                type_size_field_pos = write_stream.tellp();
+                type_size_field_pos -= 8;
+            }
         }
 
         value_write_stream::compound::~compound() {
             auto pos = write_stream.tellp();
             write_stream.seekp(type_size_field_pos);
             auto typ = enbt::type_id(enbt::type::compound, enbt::type_len::Long);
-            write_type_id(write_stream, typ);
-            write_define_len(write_stream, items);
+            if (type_id_written)
+                write_type_id(write_stream, typ);
+            write_define_len(write_stream, (uint64_t)items);
             write_stream.seekp(pos);
         }
 
-        void value_write_stream::compound::write(std::string_view filed_name, const enbt::value& value) {
+        value_write_stream::compound& value_write_stream::compound::write(std::string_view filed_name, const enbt::value& value) {
             write_string(write_stream, filed_name);
             write_token(write_stream, value);
             items++;
+            return *this;
         }
 
-        void value_write_stream::compound::write(std::string_view filed_name, const std::function<void(value_write_stream& inner)>& fn) {
+        value_write_stream::compound& value_write_stream::compound::write(std::string_view filed_name, const std::function<void(value_write_stream& inner)>& fn) {
             write_string(write_stream, filed_name);
             value_write_stream inner(write_stream);
             fn(inner);
             items++;
+            return *this;
         }
 
         void value_write_stream::write(const enbt::value& value) {
-            write_token(write_stream, value);
+            written_type_id = value.type_id();
+            if (need_to_write_type_id)
+                write_token(write_stream, value);
+            else
+                write_value(write_stream, value);
         }
 
         value_write_stream::compound value_write_stream::write_compound() {
-            return compound(write_stream);
+            written_type_id = enbt::type_id(enbt::type::compound, enbt::type_len::Long);
+            return compound(write_stream, need_to_write_type_id);
         }
 
         value_write_stream::darray value_write_stream::write_darray() {
-            return darray(write_stream);
+            written_type_id = enbt::type_id(enbt::type::darray, enbt::type_len::Long);
+            return darray(write_stream, need_to_write_type_id);
         }
 
-        value_write_stream::value_write_stream(std::ostream& write_stream)
-            : write_stream(write_stream) {
+        value_write_stream::array value_write_stream::write_array(size_t size) {
+            written_type_id = enbt::type_id(enbt::type::array, enbt::calc_type_len(size));
+            return array(write_stream, size, need_to_write_type_id);
         }
 
+        value_write_stream::value_write_stream(std::ostream& write_stream, bool need_to_write_type_id)
+            : write_stream(write_stream), need_to_write_type_id(need_to_write_type_id) {
+        }
     }
 }
 
