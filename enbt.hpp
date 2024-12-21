@@ -493,10 +493,7 @@ namespace enbt {
             data_len = sizeof(T);
             if (data_len <= 8 && data_type_id.type != enbt::type::uuid) {
                 data = nullptr;
-                char* prox0 = (char*)&data;
-                char* prox1 = (char*)&val;
-                for (std::size_t i = 0; i < data_len; i++)
-                    prox0[i] = prox1[i];
+                std::memcpy((char*)&data, (char*)&val, data_len);
             } else {
                 free_data(data, data_type_id, data_len);
                 data = (std::uint8_t*)new T(val);
@@ -507,10 +504,7 @@ namespace enbt {
         void set_data(T* val, std::size_t len) {
             data_len = len * sizeof(T);
             if (data_len <= 8) {
-                char* prox0 = (char*)data;
-                char* prox1 = (char*)val;
-                for (std::size_t i = 0; i < data_len; i++)
-                    prox0[i] = prox1[i];
+                std::memcpy((char*)&data, (char*)&val, data_len);
             } else {
                 free_data(data, data_type_id, data_len);
                 T* tmp = new T[len / sizeof(T)];
@@ -1950,7 +1944,6 @@ namespace enbt {
             return proxy->insert_or_assign(hint, std::move(key_value), std::forward<T>(values));
         }
 
-
         mapped_type& operator[](const key_type& key_value) {
             return proxy->operator[](key_value);
         }
@@ -1986,7 +1979,6 @@ namespace enbt {
         decltype(auto) emplace(const_iterator where, Values&&... vals) {
             return proxy->emplace_hint(where, std::forward<Values>(vals)...);
         }
-
 
         std::pair<iterator, iterator> equal_range(const key_type& key_value) {
             return proxy->equal_range(key_value);
@@ -2036,6 +2028,7 @@ namespace enbt {
         bool as_const = false;
 
         friend class fixed_array;
+
         fixed_array_ref(value& abstract) {
             proxy = std::get<std::vector<value>*>(abstract.content());
             as_const = false;
@@ -2838,7 +2831,6 @@ namespace enbt {
             fixed_type = ref.fixed_type;
         }
 
-
         fixed_array& operator=(const fixed_array& copy) {
             holder = copy.holder;
             proxy = std::get<std::vector<value>*>(holder.content());
@@ -2978,6 +2970,7 @@ namespace enbt {
 
     public:
         static constexpr enbt::type_id enbt_type = enbt::type_id(enbt::type::sarray, simple_array_ref<T>::type_len, std::is_signed_v<T>);
+
         simple_array(std::initializer_list<T> list)
             : simple_array(list.size()) {
             std::size_t i = 0;

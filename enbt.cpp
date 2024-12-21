@@ -978,45 +978,45 @@ namespace enbt {
 
     template <class Target>
     Target simpleIntConvert(const value::value_variants& val) {
-        if (std::holds_alternative<nullptr_t>(val))
-            return Target(0);
-
-        else if (std::holds_alternative<bool>(val))
-            return Target(std::get<bool>(val));
-
-        else if (std::holds_alternative<std::uint8_t>(val))
-            return (Target)std::get<std::uint8_t>(val);
-        else if (std::holds_alternative<std::int8_t>(val))
-            return (Target)std::get<std::int8_t>(val);
-
-        else if (std::holds_alternative<std::uint16_t>(val))
-            return (Target)std::get<std::uint16_t>(val);
-        else if (std::holds_alternative<std::int16_t>(val))
-            return (Target)std::get<std::int16_t>(val);
-
-        else if (std::holds_alternative<std::uint32_t>(val))
-            return (Target)std::get<std::uint32_t>(val);
-        else if (std::holds_alternative<std::int32_t>(val))
-            return (Target)std::get<std::int32_t>(val);
-
-        else if (std::holds_alternative<std::uint64_t>(val))
-            return (Target)std::get<std::uint64_t>(val);
-        else if (std::holds_alternative<std::int64_t>(val))
-            return (Target)std::get<std::int64_t>(val);
-
-        else if (std::holds_alternative<float>(val))
-            return (Target)std::get<float>(val);
-        else if (std::holds_alternative<double>(val))
-            return (Target)std::get<double>(val);
-        else if (std::holds_alternative<std::string*>(val)) {
-            if constexpr (std::is_unsigned_v<Target>)
-                return std::stoull(*std::get<std::string*>(val));
-            else if constexpr (std::is_floating_point_v<Target>)
-                return std::stod(*std::get<std::string*>(val));
-            else
-                return std::stoll(*std::get<std::string*>(val));
-        } else
-            throw exception("Invalid type for convert");
+        return std::visit(
+            [](auto& it) -> Target {
+                using T = std::decay_t<decltype(it)>;
+                if constexpr (std::is_same_v<T, nullptr_t>)
+                    return Target(0);
+                else if constexpr (std::is_same_v<T, bool>)
+                    return Target(it);
+                else if constexpr (std::is_same_v<T, std::uint8_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::int8_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::uint16_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::int16_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::uint32_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::int32_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::uint64_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::int64_t>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, float>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, double>)
+                    return (Target)it;
+                else if constexpr (std::is_same_v<T, std::string>) {
+                    if constexpr (std::is_unsigned_v<Target>)
+                        return (Target)std::stoull(*it);
+                    else if constexpr (std::is_floating_point_v<Target>)
+                        return (Target)std::stod(*it);
+                    else
+                        return (Target)std::stoll(*it);
+                } else
+                    throw exception("Invalid type for convert");
+            },
+            val
+        );
     }
 
     value& value::operator=(uint8_t set_value) {

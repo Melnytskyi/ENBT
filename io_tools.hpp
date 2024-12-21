@@ -18,6 +18,10 @@ namespace enbt {
             T write_cast(const std::unique_ptr<T>& value) {
                 return *value;
             }
+
+            std::unique_ptr<T> read_cast(T&& value) {
+                return std::make_unique<T>(std::move(value));
+            }
         };
 
         template <class T>
@@ -26,6 +30,10 @@ namespace enbt {
             T write_cast(const std::shared_ptr<T>& value) {
                 return *value;
             }
+
+            std::shared_ptr<T> read_cast(T&& value) {
+                return std::make_shared<T>(std::move(value));
+            }
         };
 
         template <class T>
@@ -33,6 +41,10 @@ namespace enbt {
         struct serialization_simple_cast<serialization_simple_cast<T>> {
             auto write_cast(const serialization_simple_cast<T>& value) {
                 return value.write_cast(value);
+            }
+
+            auto read_cast(T&& value) {
+                return value.read_cast(value);
             }
         };
 
@@ -196,10 +208,20 @@ namespace enbt {
             }
 
             static void read(std::vector<T>& value, value_read_stream& read_stream) {
-                read_stream.iterate(
-                    [&](std::uint64_t len) { value.reserve(len); },
-                    [&](value_read_stream& self) { value.push_back(serialization<T>::read(self)); }
-                );
+                if constexpr (std::is_integral_v<T>) {
+                    value = read_stream.iterate_into();
+                } else if constexpr (serialization_simple_cast_data<T>::value) {
+                    auto tmp = read_stream.iterate_into<serialization_simple_cast<T>::type>();
+                    value.clear();
+                    value.reserve(tmp.size());
+                    for (auto it : tmp)
+                        value.push_back(serialization_simple_cast<T>::read_cast(it));
+                } else {
+                    read_stream.iterate(
+                        [&](std::uint64_t len) { value.reserve(len); },
+                        [&](value_read_stream& self) { value.push_back(serialization<T>::read(self)); }
+                    );
+                }
             }
 
             static void write(const std::vector<T>& value, value_write_stream& write_stream) {
@@ -241,17 +263,27 @@ namespace enbt {
             }
 
             static void read(std::array<T, N>& value, value_read_stream& read_stream) {
-                size_t i = 0;
-                read_stream.iterate(
-                    [](std::uint64_t len) {
-                        if (len != N)
-                            throw std::runtime_error("Invalid array size");
-                    },
-                    [&](value_read_stream& self) {
-                        value[i] = serialization<T>::read(self);
-                        i++;
-                    }
-                );
+                if constexpr (std::is_integral_v<T>) {
+                    read_stream.iterate_into(value.data(), N);
+                } else if constexpr (serialization_simple_cast_data<T>::value) {
+                    std::vector<serialization_simple_cast_data<T>::type> tmp;
+                    tmp.resize(N);
+                    read_stream.iterate_into(tmp.data(), N);
+                    for (size_t i = 0; i < N; i++)
+                        value[i] = serialization_simple_cast<T>::read_cast(tmp[i]);
+                } else {
+                    size_t i = 0;
+                    read_stream.iterate(
+                        [](std::uint64_t len) {
+                            if (len != N)
+                                throw std::runtime_error("Invalid array size");
+                        },
+                        [&](value_read_stream& self) {
+                            serialization<T>::read(value[i], self);
+                            i++;
+                        }
+                    );
+                }
             }
 
             static void write(const std::array<T, N>& value, value_write_stream& write_stream) {
@@ -267,17 +299,27 @@ namespace enbt {
         template <class T, size_t N>
         struct serialization<T[N]> {
             static void read(T (&value)[N], value_read_stream& read_stream) {
-                size_t i = 0;
-                read_stream.iterate(
-                    [](std::uint64_t len) {
-                        if (len != N)
-                            throw std::runtime_error("Invalid array size");
-                    },
-                    [&](value_read_stream& self) {
-                        serialization<T>::read(value[i], self);
-                        i++;
-                    }
-                );
+                if constexpr (std::is_integral_v<T>) {
+                    read_stream.iterate_into(value, N);
+                } else if constexpr (serialization_simple_cast_data<T>::value) {
+                    std::vector<serialization_simple_cast_data<T>::type> tmp;
+                    tmp.resize(N);
+                    read_stream.iterate_into(tmp.data(), N);
+                    for (size_t i = 0; i < N; i++)
+                        value[i] = serialization_simple_cast<T>::read_cast(tmp[i]);
+                } else {
+                    size_t i = 0;
+                    read_stream.iterate(
+                        [](std::uint64_t len) {
+                            if (len != N)
+                                throw std::runtime_error("Invalid array size");
+                        },
+                        [&](value_read_stream& self) {
+                            serialization<T>::read(value[i], self);
+                            i++;
+                        }
+                    );
+                }
             }
 
             static void write(const T (&value)[N], value_write_stream& write_stream) {

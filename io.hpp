@@ -107,6 +107,56 @@ namespace enbt {
             void iterate(std::function<void(std::string_view name, value_read_stream& self)> callback); //compound
             void iterate(std::function<void(value_read_stream& self)> callback);                        //array
 
+            template <class T>
+            void iterate_into(T* arr, size_t size) {
+                if (current_type_id.type == enbt::type::sarray) {
+                    if (simple_array<T>::enbt_type.length != current_type_id.length)
+                        throw enbt::exception("Type missmatch");
+                    std::uint64_t len = read_compress_len(read_stream);
+                    if (len != size)
+                        throw std::out_of_range("Invalid array size");
+                    read_stream.read((char*)arr, size * sizeof(T));
+                    enbt::endian_helpers::convert_endian_arr(current_type_id.get_endian(), arr, size);
+                } else {
+                    size_t index = 0;
+                    iterate(
+                        [&](size_t len) {
+                            if (len != size)
+                                throw std::runtime_error("Invalid array size");
+                        },
+                        [&](value_read_stream& self) {
+                            arr[index++] = self.read();
+                        }
+                    );
+                }
+            }
+
+            template <class T>
+            std::vector<T> iterate_into() {
+                if (current_type_id.type == enbt::type::sarray) {
+                    if (simple_array<T>::enbt_type.length != current_type_id.length)
+                        throw enbt::exception("Type missmatch");
+                    std::uint64_t len = read_compress_len(read_stream);
+                    std::vector<T> res;
+                    res.resize(len);
+                    read_stream.read((char*)res.data(), len * sizeof(T));
+                    enbt::endian_helpers::convert_endian_arr(current_type_id.get_endian(), res);
+                    return res;
+                } else {
+                    size_t index = 0;
+                    std::vector<T> res;
+                    iterate(
+                        [&](size_t len) {
+                            res.reserve(len);
+                        },
+                        [&](value_read_stream& self) {
+                            res.push_back(self.read());
+                        }
+                    );
+                    return res;
+                }
+            }
+
             void iterate(std::function<void(std::uint64_t)> size_callback, std::function<void(std::string_view name, value_read_stream& self)> callback); //compound
             void iterate(std::function<void(std::uint64_t)> size_callback, std::function<void(value_read_stream& self)> callback);                        //array
             void join_log_item(std::function<void(value_read_stream& self)> callback);
@@ -268,7 +318,6 @@ namespace enbt {
                     return *this;
                 }
             };
-
 
             void write(const enbt::value&);
             compound write_compound();
