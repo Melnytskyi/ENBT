@@ -1,7 +1,6 @@
 #ifndef ENBT_IO
 #define ENBT_IO
 #include "enbt.hpp"
-#include <functional>
 #include <istream>
 
 namespace enbt {
@@ -103,9 +102,19 @@ namespace enbt {
                 return current_type_id;
             }
 
-            //less memory consumption
-            void iterate(std::function<void(std::string_view name, value_read_stream& self)> callback); //compound
-            void iterate(std::function<void(value_read_stream& self)> callback);                        //array
+            template <class FN>
+            void iterate(FN&& callback)
+                requires std::is_invocable_v<FN, std::string_view, value_read_stream&>
+            {
+                iterate([](std::uint64_t) {}, std::move(callback));
+            }
+
+            template <class FN>
+            void iterate(FN&& callback)
+                requires std::is_invocable_v<FN, value_read_stream&>
+            {
+                iterate([](std::uint64_t) {}, std::move(callback));
+            }
 
             template <class T>
             void iterate_into(T* arr, size_t size) {
@@ -157,20 +166,122 @@ namespace enbt {
                 }
             }
 
-            void iterate(std::function<void(std::uint64_t)> size_callback, std::function<void(std::string_view name, value_read_stream& self)> callback); //compound
-            void iterate(std::function<void(std::uint64_t)> size_callback, std::function<void(value_read_stream& self)> callback);                        //array
-            void join_log_item(std::function<void(value_read_stream& self)> callback);
+            template <class SIZE_FN, class FN>
+            void iterate(SIZE_FN&& size_callback, FN&& callback)
+                requires std::is_invocable_v<FN, std::string_view, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
+            {
+                if (current_type_id.type == enbt::type::compound) {
+                    std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                    size_callback(len);
+                    for (std::uint64_t i = 0; i < len; i++) {
+                        auto name = read_string(read_stream);
+                        value_read_stream stream(read_stream);
+                        callback(name, stream);
+                    }
+                } else
+                    throw std::invalid_argument("not compound type");
+            }
 
-            void blind_iterate(
-                std::function<void(std::string_view name, value_read_stream& self)> compound,
-                std::function<void(value_read_stream& self)> array_or_log_item
-            );
+            template <class SIZE_FN, class FN>
+            void iterate(SIZE_FN&& size_callback, FN&& callback)
+                requires std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
+            {
+                if (current_type_id.type == enbt::type::array) {
+                    std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                    size_callback(len);
+                    if (len) {
+                        auto target_id = read_type_id(read_stream);
+                        for (std::uint64_t i = 0; i < len; i++) {
+                            value_read_stream stream(read_stream, target_id);
+                            callback(stream);
+                        }
+                    }
+                } else if (current_type_id.type == enbt::type::darray) {
+                    std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                    size_callback(len);
+                    for (std::uint64_t i = 0; i < len; i++) {
+                        value_read_stream stream(read_stream);
+                        callback(stream);
+                    }
+                } else if (current_type_id.type == enbt::type::sarray) {
+                    std::uint64_t len = read_compress_len(read_stream);
+                    size_callback(len);
+                    for (std::uint64_t i = 0; i < len; i++) {
+                        value_read_stream stream(read_stream, enbt::type_id(enbt::type::integer, current_type_id.length, current_type_id.endian, current_type_id.is_signed));
+                        callback(stream);
+                    }
+                } else
+                    throw std::invalid_argument("not array type");
+            }
 
+            template <class FN>
+            void join_log_item(FN&& callback)
+                requires std::is_invocable_v<FN, value_read_stream&>
+            {
+                if (current_type_id.type == enbt::type::log_item) {
+                    read_compress_len(read_stream);
+                    value_read_stream stream(read_stream);
+                    callback(stream);
+                } else
+                    throw std::invalid_argument("not log_item type");
+            }
+
+            template <class COMPOUND_FN, class ARRAY_FN>
             void blind_iterate(
-                std::function<void(std::uint64_t)> size_callback,
-                std::function<void(std::string_view name, value_read_stream& self)> compound,
-                std::function<void(value_read_stream& self)> array_or_log_item
-            );
+                COMPOUND_FN&& compound,
+                ARRAY_FN&& array_or_log_item
+            )
+                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&>
+            {
+                blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
+            }
+
+            template <class SIZE_FN, class COMPOUND_FN, class ARRAY_FN>
+            void blind_iterate(
+                SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item
+            )
+                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
+            {
+                if (current_type_id.type == enbt::type::compound) {
+                    std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                    size_callback(len);
+                    for (std::uint64_t i = 0; i < len; i++) {
+                        auto name = read_string(read_stream);
+                        value_read_stream stream(read_stream);
+                        compound(name, stream);
+                    }
+                } else if (current_type_id.type == enbt::type::array) {
+                    std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                    size_callback(len);
+                    if (len) {
+                        auto target_id = read_type_id(read_stream);
+                        for (std::uint64_t i = 0; i < len; i++) {
+                            value_read_stream stream(read_stream, target_id);
+                            array_or_log_item(stream);
+                        }
+                    }
+                } else if (current_type_id.type == enbt::type::darray) {
+                    std::uint64_t len = read_define_len64(read_stream, current_type_id);
+                    size_callback(len);
+                    for (std::uint64_t i = 0; i < len; i++) {
+                        value_read_stream stream(read_stream);
+                        array_or_log_item(stream);
+                    }
+                } else if (current_type_id.type == enbt::type::sarray) {
+                    std::uint64_t len = read_compress_len(read_stream);
+                    size_callback(len);
+                    for (std::uint64_t i = 0; i < len; i++) {
+                        value_read_stream stream(read_stream, enbt::type_id(enbt::type::integer, current_type_id.length, current_type_id.endian, current_type_id.is_signed));
+                        array_or_log_item(stream);
+                    }
+                } else if (current_type_id.type == enbt::type::log_item) {
+                    read_compress_len(read_stream);
+                    value_read_stream stream(read_stream);
+                    size_callback(1);
+                    array_or_log_item(stream);
+                } else
+                    throw std::invalid_argument("non iterable type");
+            }
         };
 
         class value_write_stream {
@@ -193,11 +304,22 @@ namespace enbt {
                 darray(std::ostream& write_stream, bool write_type_id);
                 ~darray();
                 darray& write(const enbt::value&);
-                darray& write(const std::function<void(value_write_stream& inner)>& fn);
+
+                template <class FN>
+                darray& write(FN&& fn)
+                    requires std::is_invocable_v<FN, value_write_stream&>
+                {
+                    value_write_stream inner(write_stream);
+                    fn(inner);
+                    items++;
+                    return *this;
+                }
 
                 //fn(item, inner)
                 template <class Iterable, class FN>
-                darray& iterable(const Iterable& iter, const FN& fn) {
+                darray& iterable(const Iterable& iter, const FN& fn)
+                    requires std::is_invocable_v<FN, value_write_stream&>
+                {
                     for (const auto& item : iter)
                         write([&](value_write_stream& inner) {
                             fn(item, inner);
@@ -221,7 +343,22 @@ namespace enbt {
                 enbt::type_id current_type_id;
                 bool type_set = false;
 
-                void write(const std::function<void(value_write_stream& inner)>& fn);
+                template <class FN>
+                void write_fn(FN&& fn) {
+                    if (items_to_write == 0)
+                        throw std::invalid_argument("array is full");
+                    auto pos = write_stream.tellp();
+                    value_write_stream inner(write_stream, !type_set);
+                    fn(inner);
+                    if (!type_set) {
+                        current_type_id = inner.get_written_type_id();
+                        type_set = true;
+                    } else if (inner.get_written_type_id() != current_type_id) {
+                        write_stream.seekp(pos);
+                        throw enbt::exception("array type mismatch");
+                    }
+                    items_to_write--;
+                }
 
             public:
                 array(std::ostream& write_stream, size_t size, bool write_type_id);
@@ -232,7 +369,7 @@ namespace enbt {
                 template <class Iterable, class FN>
                 array& iterable(const Iterable& iter, const FN& fn) {
                     for (const auto& item : iter)
-                        write([&](value_write_stream& inner) {
+                        write_fn([&](value_write_stream& inner) {
                             fn(item, inner);
                         });
                     return *this;
@@ -241,7 +378,7 @@ namespace enbt {
                 template <class Iterable, class FN>
                 array& iterable(const Iterable& iter) {
                     for (const auto& item : iter)
-                        write([&](value_write_stream& inner) {
+                        write_fn([&](value_write_stream& inner) {
                             inner.write(item);
                         });
                     return *this;
@@ -297,7 +434,17 @@ namespace enbt {
                 ~compound();
 
                 compound& write(std::string_view filed_name, const enbt::value&);
-                compound& write(std::string_view filed_name, const std::function<void(value_write_stream& inner)>& fn);
+
+                template <class FN>
+                compound& write(std::string_view filed_name, FN&& fn)
+                    requires std::is_invocable_v<FN, value_write_stream&>
+                {
+                    write_string(write_stream, filed_name);
+                    value_write_stream inner(write_stream);
+                    fn(inner);
+                    items++;
+                    return *this;
+                }
 
                 //fn(name, item, inner)
                 template <class Iterable, class FN>

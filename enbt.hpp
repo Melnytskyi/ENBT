@@ -1904,6 +1904,10 @@ namespace enbt {
             return proxy->insert(std::move(node));
         }
 
+        void reserve(size_type max_count) {
+            proxy->reserve(max_count);
+        }
+
         template <class... _Ts>
         std::pair<iterator, bool> try_emplace(const key_type& key_value, _Ts&&... values) {
             return proxy->try_emplace(key_value, std::forward<_Ts>(values)...);

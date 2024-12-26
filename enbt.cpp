@@ -2476,118 +2476,6 @@ namespace enbt {
             return read_value(read_stream, current_type_id);
         }
 
-        void value_read_stream::iterate(std::function<void(std::string_view name, value_read_stream& self)> callback) {
-            iterate([](std::uint64_t) {}, std::move(callback));
-        }
-
-        void value_read_stream::iterate(std::function<void(value_read_stream& self)> callback) {
-            iterate([](std::uint64_t) {}, std::move(callback));
-        }
-
-        void value_read_stream::iterate(std::function<void(std::uint64_t)> size_callback, std::function<void(std::string_view name, value_read_stream& self)> callback) {
-            if (current_type_id.type == enbt::type::compound) {
-                std::uint64_t len = read_define_len64(read_stream, current_type_id);
-                size_callback(len);
-                for (std::uint64_t i = 0; i < len; i++) {
-                    auto name = read_string(read_stream);
-                    value_read_stream stream(read_stream);
-                    callback(name, stream);
-                }
-            } else
-                throw std::invalid_argument("not compound type");
-        }
-
-        void value_read_stream::iterate(std::function<void(std::uint64_t)> size_callback, std::function<void(value_read_stream& self)> callback) {
-            if (current_type_id.type == enbt::type::array) {
-                std::uint64_t len = read_define_len64(read_stream, current_type_id);
-                size_callback(len);
-                if (len) {
-                    auto target_id = read_type_id(read_stream);
-                    for (std::uint64_t i = 0; i < len; i++) {
-                        value_read_stream stream(read_stream, target_id);
-                        callback(stream);
-                    }
-                }
-            } else if (current_type_id.type == enbt::type::darray) {
-                std::uint64_t len = read_define_len64(read_stream, current_type_id);
-                size_callback(len);
-                for (std::uint64_t i = 0; i < len; i++) {
-                    value_read_stream stream(read_stream);
-                    callback(stream);
-                }
-            } else if (current_type_id.type == enbt::type::sarray) {
-                std::uint64_t len = read_compress_len(read_stream);
-                size_callback(len);
-                for (std::uint64_t i = 0; i < len; i++) {
-                    value_read_stream stream(read_stream, enbt::type_id(enbt::type::integer, current_type_id.length, current_type_id.endian, current_type_id.is_signed));
-                    callback(stream);
-                }
-            } else
-                throw std::invalid_argument("not array type");
-        }
-
-        void value_read_stream::join_log_item(std::function<void(value_read_stream& self)> callback) {
-            if (current_type_id.type == enbt::type::log_item) {
-                read_compress_len(read_stream);
-                value_read_stream stream(read_stream);
-                callback(stream);
-            } else
-                throw std::invalid_argument("not log_item type");
-        }
-
-        void value_read_stream::blind_iterate(
-            std::function<void(std::string_view name, value_read_stream& self)> compound,
-            std::function<void(value_read_stream& self)> array_or_log_item
-        ) {
-            blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
-        }
-
-        void value_read_stream::blind_iterate(
-            std::function<void(std::uint64_t)> size_callback,
-            std::function<void(std::string_view name, value_read_stream& self)> compound,
-            std::function<void(value_read_stream& self)> array_or_log_item
-        ) {
-            if (current_type_id.type == enbt::type::compound) {
-                std::uint64_t len = read_define_len64(read_stream, current_type_id);
-                size_callback(len);
-                for (std::uint64_t i = 0; i < len; i++) {
-                    auto name = read_string(read_stream);
-                    value_read_stream stream(read_stream);
-                    compound(name, stream);
-                }
-            } else if (current_type_id.type == enbt::type::array) {
-                std::uint64_t len = read_define_len64(read_stream, current_type_id);
-                size_callback(len);
-                if (len) {
-                    auto target_id = read_type_id(read_stream);
-                    for (std::uint64_t i = 0; i < len; i++) {
-                        value_read_stream stream(read_stream, target_id);
-                        array_or_log_item(stream);
-                    }
-                }
-            } else if (current_type_id.type == enbt::type::darray) {
-                std::uint64_t len = read_define_len64(read_stream, current_type_id);
-                size_callback(len);
-                for (std::uint64_t i = 0; i < len; i++) {
-                    value_read_stream stream(read_stream);
-                    array_or_log_item(stream);
-                }
-            } else if (current_type_id.type == enbt::type::sarray) {
-                std::uint64_t len = read_compress_len(read_stream);
-                size_callback(len);
-                for (std::uint64_t i = 0; i < len; i++) {
-                    value_read_stream stream(read_stream, enbt::type_id(enbt::type::integer, current_type_id.length, current_type_id.endian, current_type_id.is_signed));
-                    array_or_log_item(stream);
-                }
-            } else if (current_type_id.type == enbt::type::log_item) {
-                read_compress_len(read_stream);
-                value_read_stream stream(read_stream);
-                size_callback(1);
-                array_or_log_item(stream);
-            } else
-                throw std::invalid_argument("non iterable type");
-        }
-
         value_write_stream::darray::darray(std::ostream& write_stream, bool write_type_id)
             : write_stream(write_stream), type_id_written(write_type_id) {
             if (write_type_id) {
@@ -2617,13 +2505,6 @@ namespace enbt {
             return *this;
         }
 
-        value_write_stream::darray& value_write_stream::darray::write(const std::function<void(value_write_stream& inner)>& fn) {
-            value_write_stream inner(write_stream);
-            fn(inner);
-            items++;
-            return *this;
-        }
-
         value_write_stream::array::array(std::ostream& write_stream, size_t size, bool write_type_id_)
             : write_stream(write_stream), items_to_write(size) {
             enbt::type_id type(enbt::type::array, enbt::calc_type_len(size));
@@ -2645,22 +2526,6 @@ namespace enbt {
             write_value(write_stream, it);
             items_to_write--;
             return *this;
-        }
-
-        void value_write_stream::array::write(const std::function<void(value_write_stream& inner)>& fn) {
-            if (items_to_write == 0)
-                throw std::invalid_argument("array is full");
-            auto pos = write_stream.tellp();
-            value_write_stream inner(write_stream, !type_set);
-            fn(inner);
-            if (!type_set) {
-                current_type_id = inner.get_written_type_id();
-                type_set = true;
-            } else if (inner.get_written_type_id() != current_type_id) {
-                write_stream.seekp(pos);
-                throw enbt::exception("array type mismatch");
-            }
-            items_to_write--;
         }
 
         value_write_stream::compound::compound(std::ostream& write_stream, bool set_type_id)
@@ -2689,14 +2554,6 @@ namespace enbt {
         value_write_stream::compound& value_write_stream::compound::write(std::string_view filed_name, const enbt::value& value) {
             write_string(write_stream, filed_name);
             write_token(write_stream, value);
-            items++;
-            return *this;
-        }
-
-        value_write_stream::compound& value_write_stream::compound::write(std::string_view filed_name, const std::function<void(value_write_stream& inner)>& fn) {
-            write_string(write_stream, filed_name);
-            value_write_stream inner(write_stream);
-            fn(inner);
             items++;
             return *this;
         }
