@@ -2,6 +2,7 @@
 #define ENBT_IO
 #include "enbt.hpp"
 #include <istream>
+#include <type_traits>
 
 namespace enbt {
     namespace io_helper {
@@ -85,26 +86,80 @@ namespace enbt {
         bool move_to_value_path(std::istream& read_stream, const value_path& value_path);
         value get_value_path(std::istream& read_stream, const value_path& value_path);
 
+        //lightweight reader class for reading from stream without allocations,
+        // all functions except peek_* is final and do not preserve position of read_stream, and must be used once for lifetime of value_read_stream
+        // peek_* functions require istream to be seekable
         class value_read_stream {
             std::istream& read_stream;
 
             enbt::type_id current_type_id;
+            bool readed = false;
 
             value_read_stream(std::istream& read_stream, enbt::type_id current_type_id)
                 : read_stream(read_stream), current_type_id(current_type_id) {}
 
         public:
             value_read_stream(std::istream& read_stream);
+            ~value_read_stream();
 
             enbt::value read(); //default read
+            void skip();
 
             enbt::type_id get_type_id() const {
                 return current_type_id;
             }
 
             template <class FN>
+            value_read_stream& peek_at(std::uint64_t index, FN&& callback) {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    index_array(read_stream, index, current_type_id);
+                    value_read_stream stream(read_stream);
+                    callback(stream);
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
+                return *this;
+            }
+
+            template <class FN>
+            value_read_stream& peek_at(const std::string& chr, FN&& callback) {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    if (find_value_compound(read_stream, current_type_id, chr)) {
+                        value_read_stream stream(read_stream);
+                        callback(stream);
+                        read_stream.setstate(old_state);
+                        read_stream.seekg(old_pos);
+                        readed = false;
+                    } else
+                        throw enbt::exception("Key not found");
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
+                return *this;
+            }
+
+            size_t peek_size();
+
+            template <class FN>
             void iterate(FN&& callback)
-                requires std::is_invocable_v<FN, std::string_view, value_read_stream&>
+                requires std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>
             {
                 iterate([](std::uint64_t) {}, std::move(callback));
             }
@@ -116,15 +171,32 @@ namespace enbt {
                 iterate([](std::uint64_t) {}, std::move(callback));
             }
 
+            template <class FN>
+            void peek_iterate(FN&& callback)
+                requires std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>
+            {
+                peek_iterate([](std::uint64_t) {}, std::move(callback));
+            }
+
+            template <class FN>
+            void peek_iterate(FN&& callback)
+                requires std::is_invocable_v<FN, value_read_stream&>
+            {
+                peek_iterate([](std::uint64_t) {}, std::move(callback));
+            }
+
             template <class T>
             void iterate_into(T* arr, size_t size) {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::sarray) {
                     if (simple_array<T>::enbt_type.length != current_type_id.length)
-                        throw enbt::exception("Type missmatch");
+                        throw enbt::exception("Type mismatch");
                     std::uint64_t len = read_compress_len(read_stream);
                     if (len != size)
                         throw std::out_of_range("Invalid array size");
                     read_stream.read((char*)arr, size * sizeof(T));
+                    readed = true;
                     enbt::endian_helpers::convert_endian_arr(current_type_id.get_endian(), arr, size);
                 } else {
                     size_t index = 0;
@@ -141,14 +213,35 @@ namespace enbt {
             }
 
             template <class T>
+            void peek_iterate_into(T* arr, size_t size) {
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    iterate_into(arr, size);
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
+                readed = false;
+            }
+
+            template <class T>
             std::vector<T> iterate_into() {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::sarray) {
                     if (simple_array<T>::enbt_type.length != current_type_id.length)
-                        throw enbt::exception("Type missmatch");
+                        throw enbt::exception("Type mismatch");
                     std::uint64_t len = read_compress_len(read_stream);
                     std::vector<T> res;
                     res.resize(len);
                     read_stream.read((char*)res.data(), len * sizeof(T));
+                    readed = true;
                     enbt::endian_helpers::convert_endian_arr(current_type_id.get_endian(), res);
                     return res;
                 } else {
@@ -166,10 +259,30 @@ namespace enbt {
                 }
             }
 
+            template <class T>
+            std::vector<T> peek_iterate_into() {
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    auto res = iterate_into<T>();
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    return res;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
+            }
+
             template <class SIZE_FN, class FN>
             void iterate(SIZE_FN&& size_callback, FN&& callback)
-                requires std::is_invocable_v<FN, std::string_view, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
+                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
             {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::compound) {
                     std::uint64_t len = read_define_len64(read_stream, current_type_id);
                     size_callback(len);
@@ -178,14 +291,36 @@ namespace enbt {
                         value_read_stream stream(read_stream);
                         callback(name, stream);
                     }
+                    readed = true;
                 } else
                     throw std::invalid_argument("not compound type");
+            }
+
+            template <class SIZE_FN, class FN>
+            void peek_iterate(SIZE_FN&& size_callback, FN&& callback)
+                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
+            {
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    iterate(size_callback, callback);
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
             }
 
             template <class SIZE_FN, class FN>
             void iterate(SIZE_FN&& size_callback, FN&& callback)
                 requires std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
             {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::array) {
                     std::uint64_t len = read_define_len64(read_stream, current_type_id);
                     size_callback(len);
@@ -212,18 +347,60 @@ namespace enbt {
                     }
                 } else
                     throw std::invalid_argument("not array type");
+                readed = true;
+            }
+
+            template <class SIZE_FN, class FN>
+            void peek_iterate(SIZE_FN&& size_callback, FN&& callback)
+                requires std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
+            {
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    iterate(size_callback, callback);
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
             }
 
             template <class FN>
             void join_log_item(FN&& callback)
                 requires std::is_invocable_v<FN, value_read_stream&>
             {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::log_item) {
                     read_compress_len(read_stream);
                     value_read_stream stream(read_stream);
                     callback(stream);
+                    readed = true;
                 } else
                     throw std::invalid_argument("not log_item type");
+            }
+
+            template <class FN>
+            void peek_join_log_item(FN&& callback)
+                requires std::is_invocable_v<FN, value_read_stream&>
+            {
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    join_log_item(callback);
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
             }
 
             template <class COMPOUND_FN, class ARRAY_FN>
@@ -231,7 +408,7 @@ namespace enbt {
                 COMPOUND_FN&& compound,
                 ARRAY_FN&& array_or_log_item
             )
-                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&>
+                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>)
             {
                 blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
             }
@@ -240,8 +417,10 @@ namespace enbt {
             void blind_iterate(
                 SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item
             )
-                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
+                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
             {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::compound) {
                     std::uint64_t len = read_define_len64(read_stream, current_type_id);
                     size_callback(len);
@@ -281,9 +460,50 @@ namespace enbt {
                     array_or_log_item(stream);
                 } else
                     throw std::invalid_argument("non iterable type");
+                readed = true;
+            }
+
+            template <class COMPOUND_FN, class ARRAY_FN>
+            void peek_blind_iterate(COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item)
+                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>)
+            {
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
+            }
+
+            template <class SIZE_FN, class COMPOUND_FN, class ARRAY_FN>
+            void peek_blind_iterate(SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item)
+                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
+            {
+                auto old_state = read_stream.rdstate();
+                auto old_pos = read_stream.tellg();
+                try {
+                    blind_iterate(size_callback, std::move(compound), std::move(array_or_log_item));
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                } catch (...) {
+                    read_stream.setstate(old_state);
+                    read_stream.seekg(old_pos);
+                    readed = false;
+                    throw;
+                }
             }
         };
 
+        //lightweight writer class for writing to stream without allocations
+        // this class requires ostream to support peek and seek operations for writing darray and compound
         class value_write_stream {
             std::ostream& write_stream;
             bool need_to_write_type_id;

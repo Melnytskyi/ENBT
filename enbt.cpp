@@ -1006,7 +1006,12 @@ namespace enbt {
                 else if constexpr (std::is_same_v<T, double>)
                     return (Target)it;
                 else if constexpr (std::is_same_v<T, std::string>) {
-                    if constexpr (std::is_unsigned_v<Target>)
+                    if constexpr (std::is_same_v<Target, bool>) {
+                        if (it == "true")
+                            return true;
+                        else
+                            return false;
+                    } else if constexpr (std::is_unsigned_v<Target>)
                         return (Target)std::stoull(*it);
                     else if constexpr (std::is_floating_point_v<Target>)
                         return (Target)std::stod(*it);
@@ -1129,6 +1134,8 @@ namespace enbt {
                 using T = std::decay_t<decltype(arg)>;
                 if constexpr (std::is_same_v<T, std::string*>)
                     return *arg;
+                else if constexpr (std::is_same_v<T, bool>)
+                    return std::string(arg ? "true" : "false");
                 else if constexpr (std::is_integral_v<T>)
                     return std::to_string(arg);
                 else if constexpr (std::is_same_v<T, std::uint8_t*>)
@@ -1922,15 +1929,16 @@ namespace enbt {
 
         std::string read_string(std::istream& read_stream) {
             std::uint64_t read = read_compress_len(read_stream);
-            std::vector<char> res;
+            std::string res;
             res.resize(read);
             read_stream.read(res.data(), read);
-            return std::string(res.data(), read);
+            return res;
         }
 
         value read_compound(std::istream& read_stream, enbt::type_id tid) {
             std::size_t len = read_define_len(read_stream, tid);
             std::unordered_map<std::string, value> result;
+            result.reserve(len);
             for (std::size_t i = 0; i < len; i++) {
                 std::string key = read_string(read_stream);
                 result[key] = read_token(read_stream);
@@ -2472,8 +2480,49 @@ namespace enbt {
             current_type_id = read_type_id(read_stream);
         }
 
+        value_read_stream::~value_read_stream() {
+            if (!readed)
+                skip();
+        }
+
         enbt::value value_read_stream::read() {
+            if (readed)
+                throw enbt::exception("Invalid read state, item has been already readed");
+            readed = true;
             return read_value(read_stream, current_type_id);
+        }
+
+        void value_read_stream::skip() {
+            if (readed)
+                throw enbt::exception("Invalid read state, item has been already readed");
+            skip_value(read_stream, current_type_id);
+            readed = true;
+        }
+
+        size_t value_read_stream::peek_size() {
+            if (readed)
+                throw enbt::exception("Invalid read state, item has been already readed");
+            auto old_state = read_stream.rdstate();
+            auto old_pos = read_stream.tellg();
+            std::uint64_t len = 0;
+            if (current_type_id.type == enbt::type::compound) {
+                len = read_define_len64(read_stream, current_type_id);
+            } else if (current_type_id.type == enbt::type::array) {
+                len = read_define_len64(read_stream, current_type_id);
+            } else if (current_type_id.type == enbt::type::darray) {
+                len = read_define_len64(read_stream, current_type_id);
+            } else if (current_type_id.type == enbt::type::sarray) {
+                len = read_compress_len(read_stream);
+            } else if (current_type_id.type == enbt::type::string) {
+                len = read_compress_len(read_stream);
+            } else {
+                read_stream.setstate(old_state);
+                read_stream.seekg(old_pos);
+                return 0;
+            }
+            read_stream.setstate(old_state);
+            read_stream.seekg(old_pos);
+            return len;
         }
 
         value_write_stream::darray::darray(std::ostream& write_stream, bool write_type_id)
@@ -2886,14 +2935,14 @@ namespace senbt {
     enbt::value parse_sarray(std::string_view& string) {
         string = string.substr(1);
         if (string.empty())
-            throw std::invalid_argument("expected simple array defintion");
+            throw std::invalid_argument("expected simple array definition");
         bool is_unsigned = false;
         if (string[0] == 'u' | string[0] == 'U') {
             is_unsigned = true;
             string = string.substr(1);
         }
         if (string.empty())
-            throw std::invalid_argument("expected simple array defintion");
+            throw std::invalid_argument("expected simple array definition");
 
         switch (string[0]) {
         case 'b':

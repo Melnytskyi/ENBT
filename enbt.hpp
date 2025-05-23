@@ -835,8 +835,50 @@ namespace enbt {
             }
         }
 
-        type_id type_id() const {
+        enbt::type_id type_id() {
+            switch (data_type_id.type) {
+            case enbt::type::compound:
+            case enbt::type::darray:
+            case enbt::type::array:
+            case enbt::type::string: {
+                auto siz = size();
+                if (siz < UINT8_MAX)
+                    data_type_id.length = enbt::type_len::Tiny;
+                else if (siz < UINT16_MAX)
+                    data_type_id.length = enbt::type_len::Short;
+                else if (siz < UINT32_MAX)
+                    data_type_id.length = enbt::type_len::Default;
+                else
+                    data_type_id.length = enbt::type_len::Long;
+                break;
+            }
+            default:
+                break;
+            }
             return data_type_id;
+        }
+
+        enbt::type_id type_id() const {
+            switch (data_type_id.type) {
+            case enbt::type::compound:
+            case enbt::type::darray:
+            case enbt::type::array:
+            case enbt::type::string: {
+                enbt::type_id res = data_type_id;
+                auto siz = size();
+                if (siz < UINT8_MAX)
+                    res.length = enbt::type_len::Tiny;
+                else if (siz < UINT16_MAX)
+                    res.length = enbt::type_len::Short;
+                else if (siz < UINT32_MAX)
+                    res.length = enbt::type_len::Default;
+                else
+                    res.length = enbt::type_len::Long;
+                return res;
+            }
+            default:
+                return data_type_id;
+            }
         }
 
         value_variants content() const {
