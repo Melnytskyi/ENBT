@@ -302,6 +302,25 @@ namespace enbt {
 
         constexpr auto operator<=>(const raw_uuid&) const = default;
 
+        // clang-format off
+
+        // Format: 8-4-4-4-12 (standard UUID format)
+        std::string to_string() const{
+            char buf[37];
+            snprintf(
+                buf, sizeof(buf),
+                "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                data[0], data[1], data[2], data[3],
+                data[4], data[5],
+                data[6], data[7],
+                data[8], data[9],
+                data[10], data[11], data[12], data[13], data[14], data[15]
+            );
+            return std::string(buf);
+        }
+
+        // clang-format on
+
         static raw_uuid from_string(std::string_view view) {
             uint64_t parts[2] = {std::hash<std::string_view>()(view), std::hash<size_t>()(view.size())};
             uint64_t p = parts[0];
