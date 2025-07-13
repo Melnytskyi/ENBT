@@ -4,7 +4,7 @@
     #include <any>
     #include <bit>
     #include <cstdint>
-    #include <exception>
+    #include <stdexcept>
     #include <initializer_list>
     #include <optional>
     #include <string>
@@ -333,6 +333,23 @@ namespace enbt {
             r.data[8] = (r.data[8] & 0x1) & 0xC0;  //microsoft family
             r.data[6] = (r.data[8] & 0x0F) & 0x30; //name_based_md5
             return r;
+        }
+
+        static std::string_view from_uuid_string(raw_uuid& res, std::string_view view, bool skip_hyphens = true) {
+            //parse standard UUID format that for from to_string function, skip -
+            size_t j = 0, i = 0;
+            for (; i < 36; i++) {
+                if (view[i] == '-' && skip_hyphens)
+                    continue;
+                if (j == 16)
+                    return view.substr(i);
+                std::string byteString = std::string(view.substr(i, 2));
+                res.data[j++] = static_cast<uint8_t>(std::stoul(byteString, nullptr, 16));
+            }
+            if (j != 16)
+                throw std::invalid_argument("Invalid UUID string format");
+            else
+                return view.substr(i);
         }
 
         static raw_uuid generate_v4();
@@ -1807,7 +1824,7 @@ namespace enbt {
             return proxy->bucket(index);
         }
 
-        size_type bucket_count() const noexcept {
+        [[nodiscard]] size_type bucket_count() const noexcept {
             return proxy->bucket_count();
         }
 
@@ -1815,15 +1832,15 @@ namespace enbt {
             return proxy->bucket_size(bucket);
         }
 
-        bool contains(const key_type& key_value) const {
+        [[nodiscard]] bool contains(const key_type& key_value) const {
             return proxy->contains(key_value);
         }
 
-        size_type count(const key_type& key_value) const {
+        [[nodiscard]] size_type count(const key_type& key_value) const {
             return proxy->count(key_value);
         }
 
-        bool empty(const key_type& key_value) const noexcept {
+        [[nodiscard]] bool empty(const key_type& key_value) const noexcept {
             return proxy->empty();
         }
 
@@ -1831,43 +1848,43 @@ namespace enbt {
             return proxy->equal_range(key_value);
         }
 
-        decltype(auto) find(const key_type& key_value) const {
+        [[nodiscard]] decltype(auto) find(const key_type& key_value) const {
             return proxy->find(key_value);
         }
 
-        float load_factor() const noexcept {
+        [[nodiscard]] float load_factor() const noexcept {
             return proxy->load_factor();
         }
 
-        size_type max_bucket_count() const noexcept {
+        [[nodiscard]] size_type max_bucket_count() const noexcept {
             return proxy->max_bucket_count();
         }
 
-        size_type max_load_factor() const noexcept {
+        [[nodiscard]] size_type max_load_factor() const noexcept {
             return proxy->max_load_factor();
         }
 
-        size_type max_size() const noexcept {
+        [[nodiscard]] size_type max_size() const noexcept {
             return proxy->max_size();
         }
 
-        size_type size() const noexcept {
+        [[nodiscard]] size_type size() const noexcept {
             return proxy->size();
         }
 
-        const_iterator begin() const {
+        [[nodiscard]] const_iterator begin() const {
             return proxy->begin();
         }
 
-        const_iterator end() const {
+        [[nodiscard]] const_iterator end() const {
             return proxy->end();
         }
 
-        const_iterator cbegin() const {
+        [[nodiscard]] const_iterator cbegin() const {
             return proxy->cbegin();
         }
 
-        const_iterator cend() const {
+        [[nodiscard]] const_iterator cend() const {
             return proxy->cend();
         }
     };
@@ -1887,14 +1904,14 @@ namespace enbt {
         }
 
     public:
-        static compound_ref make_ref(value& enbt) {
+        [[nodiscard]] static compound_ref make_ref(value& enbt) {
             if (enbt.is_compound())
                 return compound_ref(enbt);
             else
                 throw enbt::exception("value is not a compound");
         }
 
-        static compound_const_ref make_ref(const value& enbt) {
+        [[nodiscard]] static compound_const_ref make_ref(const value& enbt) {
             if (enbt.is_compound())
                 return compound_const_ref(enbt);
             else
@@ -1917,10 +1934,10 @@ namespace enbt {
             proxy->swap(swap_value);
         }
 
-        compound_ref merge(const value& copy) &;
-        compound_ref merge(value&& move) &;
-        compound_ref merge(const std::unordered_map<std::string, value>& copy) &;
-        compound_ref merge(std::unordered_map<std::string, value>&& move) &;
+        [[nodiscard]] compound_ref merge(const value& copy) &;
+        [[nodiscard]] compound_ref merge(value&& move) &;
+        [[nodiscard]] compound_ref merge(const std::unordered_map<std::string, value>& copy) &;
+        [[nodiscard]] compound_ref merge(std::unordered_map<std::string, value>&& move) &;
 
         template <class T>
         std::pair<iterator, bool> insert(T&& value) {
@@ -2009,7 +2026,7 @@ namespace enbt {
             return proxy->insert_or_assign(hint, std::move(key_value), std::forward<T>(values));
         }
 
-        mapped_type& operator[](const key_type& key_value) {
+        [[nodiscard]] mapped_type& operator[](const key_type& key_value) {
             return proxy->operator[](key_value);
         }
 
@@ -2057,31 +2074,31 @@ namespace enbt {
             return proxy->erase(key_value);
         }
 
-        node_type extract(const key_type& key_value) {
+        [[nodiscard]] node_type extract(const key_type& key_value) {
             return proxy->extract(key_value);
         }
 
-        decltype(auto) find(const key_type& key_value) {
+        [[nodiscard]] decltype(auto) find(const key_type& key_value) {
             return proxy->find(key_value);
         }
 
-        decltype(auto) find(const key_type& key_value) const {
+        [[nodiscard]] decltype(auto) find(const key_type& key_value) const {
             return proxy->find(key_value);
         }
 
-        iterator begin() {
+        [[nodiscard]] iterator begin() {
             return proxy->begin();
         }
 
-        iterator end() {
+        [[nodiscard]] iterator end() {
             return proxy->end();
         }
 
-        const_iterator begin() const {
+        [[nodiscard]] const_iterator begin() const {
             return proxy->begin();
         }
 
-        const_iterator end() const {
+        [[nodiscard]] const_iterator end() const {
             return proxy->end();
         }
     };
@@ -2109,7 +2126,7 @@ namespace enbt {
         }
 
     public:
-        static fixed_array_ref make_ref(value& enbt) {
+        [[nodiscard]] static fixed_array_ref make_ref(value& enbt) {
             if (enbt.get_type() == enbt::type::array)
                 return fixed_array_ref(enbt);
             else if (enbt.get_type() == enbt::type::darray) {
@@ -2125,7 +2142,7 @@ namespace enbt {
                 throw enbt::exception("value is not a fixed array");
         }
 
-        static fixed_array_ref make_ref(const value& enbt) {
+        [[nodiscard]] static fixed_array_ref make_ref(const value& enbt) {
             if (enbt.get_type() == enbt::type::array)
                 return fixed_array_ref(enbt);
             else if (enbt.get_type() == enbt::type::darray) {
@@ -2224,8 +2241,12 @@ namespace enbt {
             (*proxy).pop_back();
         }
 
-        const value& operator[](std::size_t index) const {
+        [[nodiscard]] const value& operator[](std::size_t index) const noexcept {
             return (*proxy)[index];
+        }
+
+        [[nodiscard]] const value& at(size_type index) const {
+            return proxy->at(index);
         }
 
         void remove(std::size_t index) {
@@ -2236,40 +2257,56 @@ namespace enbt {
             proxy->reserve(count);
         }
 
-        std::size_t size() const {
+        [[nodiscard]] std::size_t size() const {
             return proxy->size();
         }
 
-        const_iterator begin() const {
+        [[nodiscard]] bool empty() const {
+            return proxy->empty();
+        }
+
+        [[nodiscard]] const_iterator begin() const {
             return proxy->cbegin();
         }
 
-        const_iterator end() const {
+        [[nodiscard]] const_iterator end() const {
             return proxy->cend();
         }
 
-        const_iterator cbegin() const {
+        [[nodiscard]] const_iterator cbegin() const {
             return proxy->cbegin();
         }
 
-        const_iterator cend() const {
+        [[nodiscard]] const_iterator cend() const {
             return proxy->cend();
         }
 
-        const_reverse_iterator rbegin() const {
+        [[nodiscard]] const_reverse_iterator rbegin() const {
             return proxy->crbegin();
         }
 
-        const_reverse_iterator rend() const {
+        [[nodiscard]] const_reverse_iterator rend() const {
             return proxy->crend();
         }
 
-        const_reverse_iterator crbegin() const {
+        [[nodiscard]] const_reverse_iterator crbegin() const {
             return proxy->crbegin();
         }
 
-        const_reverse_iterator crend() const {
+        [[nodiscard]] const_reverse_iterator crend() const {
             return proxy->crend();
+        }
+
+        [[nodiscard]] size_t max_size() const noexcept {
+            return proxy->max_size();
+        }
+
+        [[nodiscard]] const value& front() const {
+            return proxy->front();
+        }
+
+        [[nodiscard]] const value& back() const {
+            return proxy->back();
         }
     };
 
@@ -2287,7 +2324,7 @@ namespace enbt {
         }
 
     public:
-        static dynamic_array_ref make_ref(value& enbt) {
+        [[nodiscard]] static dynamic_array_ref make_ref(value& enbt) {
             if (enbt.get_type() == enbt::type::darray)
                 return dynamic_array_ref(enbt);
             else if (enbt.get_type() == enbt::type::array) {
@@ -2297,7 +2334,7 @@ namespace enbt {
                 throw enbt::exception("value is not a dynamic array");
         }
 
-        static const dynamic_array_ref make_ref(const value& enbt) {
+        [[nodiscard]] static const dynamic_array_ref make_ref(const value& enbt) {
             if (enbt.get_type() == enbt::type::darray)
                 return dynamic_array_ref(enbt);
             else if (enbt.get_type() == enbt::type::array)
@@ -2377,11 +2414,11 @@ namespace enbt {
             proxy->resize(siz, def_init);
         }
 
-        size_type size() const {
+        [[nodiscard]] size_type size() const {
             return proxy->size();
         }
 
-        bool empty() const {
+        [[nodiscard]] bool empty() const {
             return proxy->empty();
         }
 
@@ -2421,63 +2458,63 @@ namespace enbt {
             proxy->swap(*another.proxy);
         }
 
-        value* data() {
+        [[nodiscard]] value* data() {
             return proxy->data();
         }
 
-        const value* data() const {
+        [[nodiscard]] const value* data() const {
             return proxy->data();
         }
 
-        iterator begin() {
+        [[nodiscard]] iterator begin() {
             return proxy->begin();
         }
 
-        iterator end() {
+        [[nodiscard]] iterator end() {
             return proxy->end();
         }
 
-        const_iterator begin() const {
+        [[nodiscard]] const_iterator begin() const {
             return proxy->cbegin();
         }
 
-        const_iterator end() const {
+        [[nodiscard]] const_iterator end() const {
             return proxy->cend();
         }
 
-        const_iterator cbegin() const {
+        [[nodiscard]] const_iterator cbegin() const {
             return proxy->cbegin();
         }
 
-        const_iterator cend() const {
+        [[nodiscard]] const_iterator cend() const {
             return proxy->cend();
         }
 
-        reverse_iterator rbegin() {
+        [[nodiscard]] reverse_iterator rbegin() {
             return proxy->rbegin();
         }
 
-        reverse_iterator rend() {
+        [[nodiscard]] reverse_iterator rend() {
             return proxy->rend();
         }
 
-        const_reverse_iterator rbegin() const {
+        [[nodiscard]] const_reverse_iterator rbegin() const {
             return proxy->crbegin();
         }
 
-        const_reverse_iterator rend() const {
+        [[nodiscard]] const_reverse_iterator rend() const {
             return proxy->crend();
         }
 
-        const_reverse_iterator crbegin() const {
+        [[nodiscard]] const_reverse_iterator crbegin() const {
             return proxy->crbegin();
         }
 
-        const_reverse_iterator crend() const {
+        [[nodiscard]] const_reverse_iterator crend() const {
             return proxy->crend();
         }
 
-        std::size_t max_size() const noexcept {
+        [[nodiscard]] std::size_t max_size() const noexcept {
             return proxy->max_size();
         }
 
@@ -2497,19 +2534,19 @@ namespace enbt {
             return proxy->at(index);
         }
 
-        const value& front() const {
+        [[nodiscard]] const value& front() const {
             return proxy->front();
         }
 
-        value& front() {
+        [[nodiscard]] value& front() {
             return proxy->front();
         }
 
-        const value& back() const {
+        [[nodiscard]] const value& back() const {
             return proxy->back();
         }
 
-        value& back() {
+        [[nodiscard]] value& back() {
             return proxy->back();
         }
     };
@@ -2542,7 +2579,7 @@ namespace enbt {
         }
 
     public:
-        static simple_array_const_ref make_ref(const value& enbt) {
+        [[nodiscard]] static simple_array_const_ref make_ref(const value& enbt) {
             auto ty = enbt.type_id();
             if (ty.type == enbt::type::sarray && ty.length == type_len && ty.is_signed == std::is_signed_v<T>)
                 return simple_array_const_ref(enbt);
@@ -2583,43 +2620,49 @@ namespace enbt {
             return *this;
         }
 
-        T operator[](std::size_t index) const {
+        [[nodiscard]] T operator[](std::size_t index) const noexcept {
             return proxy[index];
         }
 
-        std::size_t size() const {
+        [[nodiscard]] T at(std::size_t index) const {
+            if (size_ >= index)
+                throw std::out_of_range("invalid simple_array index");
+            return proxy[index];
+        }
+
+        [[nodiscard]] std::size_t size() const {
             return size_;
         }
 
-        const T* begin() const {
+        [[nodiscard]] const T* begin() const {
             return proxy;
         }
 
-        const T* end() const {
+        [[nodiscard]] const T* end() const {
             return proxy + size_;
         }
 
-        const T* cbegin() const {
+        [[nodiscard]] const T* cbegin() const {
             return proxy;
         }
 
-        const T* cend() const {
+        [[nodiscard]] const T* cend() const {
             return proxy + size_;
         }
 
-        const T* rbegin() const {
+        [[nodiscard]] const T* rbegin() const {
             return proxy + size_;
         }
 
-        const T* rend() const {
+        [[nodiscard]] const T* rend() const {
             return proxy;
         }
 
-        const T* crbegin() const {
+        [[nodiscard]] const T* crbegin() const {
             return proxy + size_;
         }
 
-        const T* crend() const {
+        [[nodiscard]] const T* crend() const {
             return proxy;
         }
     };
@@ -2654,7 +2697,7 @@ namespace enbt {
         }
 
     public:
-        static simple_array_ref make_ref(value& enbt) {
+        [[nodiscard]] static simple_array_ref make_ref(value& enbt) {
             auto ty = enbt.type_id();
             if (ty.type == enbt::type::sarray && ty.length == type_len && ty.is_signed == std::is_signed_v<T>)
                 return simple_array_ref(enbt);
@@ -2662,7 +2705,7 @@ namespace enbt {
                 throw enbt::exception("value is not a simple array or not same");
         }
 
-        static simple_array_const_ref<T> make_ref(const value& enbt) {
+        [[nodiscard]] static simple_array_const_ref<T> make_ref(const value& enbt) {
             return simple_array_const_ref<T>::make_ref(enbt);
         }
 
@@ -2699,63 +2742,75 @@ namespace enbt {
             return *this;
         }
 
-        T& operator[](std::size_t index) {
+        [[nodiscard]] T& operator[](std::size_t index) noexcept {
             return proxy[index];
         }
 
-        T operator[](std::size_t index) const {
+        [[nodiscard]] T operator[](std::size_t index) const noexcept {
             return proxy[index];
         }
 
-        std::size_t size() const {
+        [[nodiscard]] T at(std::size_t index) const {
+            if (size_ >= index)
+                throw std::out_of_range("invalid simple_array index");
+            return proxy[index];
+        }
+
+        [[nodiscard]] T& at(std::size_t index) {
+            if (size_ >= index)
+                throw std::out_of_range("invalid simple_array index");
+            return proxy[index];
+        }
+
+        [[nodiscard]] std::size_t size() const {
             return size_;
         }
 
-        T* begin() {
+        [[nodiscard]] T* begin() {
             return proxy;
         }
 
-        T* end() {
+        [[nodiscard]] T* end() {
             return proxy + size_;
         }
 
-        const T* begin() const {
+        [[nodiscard]] const T* begin() const {
             return proxy;
         }
 
-        const T* end() const {
+        [[nodiscard]] const T* end() const {
             return proxy + size_;
         }
 
-        const T* cbegin() const {
+        [[nodiscard]] const T* cbegin() const {
             return proxy;
         }
 
-        const T* cend() const {
+        [[nodiscard]] const T* cend() const {
             return proxy + size_;
         }
 
-        T* rbegin() {
+        [[nodiscard]] T* rbegin() {
             return proxy + size_;
         }
 
-        T* rend() {
+        [[nodiscard]] T* rend() {
             return proxy;
         }
 
-        const T* rbegin() const {
+        [[nodiscard]] const T* rbegin() const {
             return proxy + size_;
         }
 
-        const T* rend() const {
+        [[nodiscard]] const T* rend() const {
             return proxy;
         }
 
-        const T* crbegin() const {
+        [[nodiscard]] const T* crbegin() const {
             return proxy + size_;
         }
 
-        const T* crend() const {
+        [[nodiscard]] const T* crend() const {
             return proxy;
         }
     };
@@ -2832,28 +2887,28 @@ namespace enbt {
             return *this;
         }
 
-        bool operator==(const compound& tag) const {
+        [[nodiscard]] bool operator==(const compound& tag) const {
             return holder == tag.holder;
         }
 
-        bool operator!=(const compound& tag) const {
+        [[nodiscard]] bool operator!=(const compound& tag) const {
             return holder != tag.holder;
         }
 
-        compound merge(const value& copy) &&;
-        compound merge(value&& move) &&;
-        compound merge(const std::unordered_map<std::string, value>& copy) &&;
-        compound merge(std::unordered_map<std::string, value>&& move) &&;
+        [[nodiscard]] compound merge(const value& copy) &&;
+        [[nodiscard]] compound merge(value&& move) &&;
+        [[nodiscard]] compound merge(const std::unordered_map<std::string, value>& copy) &&;
+        [[nodiscard]] compound merge(std::unordered_map<std::string, value>&& move) &&;
 
-        explicit operator value&() & {
+        [[nodiscard]] explicit operator value&() & {
             return holder;
         }
 
-        explicit operator const value&() const& {
+        [[nodiscard]] explicit operator const value&() const& {
             return holder;
         }
 
-        explicit operator value&&() && {
+        [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -2908,23 +2963,23 @@ namespace enbt {
             return *this;
         }
 
-        bool operator==(const fixed_array& tag) const {
+        [[nodiscard]] bool operator==(const fixed_array& tag) const {
             return holder == tag.holder;
         }
 
-        bool operator!=(const fixed_array& tag) const {
+        [[nodiscard]] bool operator!=(const fixed_array& tag) const {
             return holder != tag.holder;
         }
 
-        explicit operator value&() & {
+        [[nodiscard]] explicit operator value&() & {
             return holder;
         }
 
-        explicit operator const value&() const& {
+        [[nodiscard]] explicit operator const value&() const& {
             return holder;
         }
 
-        explicit operator value&&() && {
+        [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -3008,23 +3063,23 @@ namespace enbt {
             return *this;
         }
 
-        bool operator==(const dynamic_array& tag) const {
+        [[nodiscard]] bool operator==(const dynamic_array& tag) const {
             return holder == tag.holder;
         }
 
-        bool operator!=(const dynamic_array& tag) const {
+        [[nodiscard]] bool operator!=(const dynamic_array& tag) const {
             return holder != tag.holder;
         }
 
-        explicit operator value&() & {
+        [[nodiscard]] explicit operator value&() & {
             return holder;
         }
 
-        explicit operator const value&() const& {
+        [[nodiscard]] explicit operator const value&() const& {
             return holder;
         }
 
-        explicit operator value&&() && {
+        [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -3099,23 +3154,23 @@ namespace enbt {
             return *this;
         }
 
-        bool operator==(const simple_array& tag) const {
+        [[nodiscard]] bool operator==(const simple_array& tag) const {
             return holder == tag.holder;
         }
 
-        bool operator!=(const simple_array& tag) const {
+        [[nodiscard]] bool operator!=(const simple_array& tag) const {
             return holder != tag.holder;
         }
 
-        explicit operator value&() & {
+        [[nodiscard]] explicit operator value&() & {
             return holder;
         }
 
-        explicit operator const value&() const& {
+        [[nodiscard]] explicit operator const value&() const& {
             return holder;
         }
 
-        explicit operator value&&() && {
+        [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -3181,15 +3236,15 @@ namespace enbt {
             return holder;
         }
 
-        explicit operator value&() & {
+        [[nodiscard]] explicit operator value&() & {
             return holder;
         }
 
-        explicit operator const value&() const& {
+        [[nodiscard]] explicit operator const value&() const& {
             return holder;
         }
 
-        explicit operator value&&() && {
+        [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -3236,14 +3291,14 @@ namespace enbt {
             holder = value((value*)nullptr, enbt::type_id(enbt::type::optional, enbt::type_len::Tiny, false), 0, false);
         }
 
-        value& get() {
+        [[nodiscard]] value& get() {
             if (auto res = holder.get_optional(); res != nullptr)
                 return *res;
             else
                 throw enbt::exception("Optional is empty");
         }
 
-        const value& get() const {
+        [[nodiscard]] const value& get() const {
             if (auto res = holder.get_optional(); res != nullptr)
                 return *res;
             else
@@ -3264,15 +3319,15 @@ namespace enbt {
             return *this;
         }
 
-        explicit operator value&() & {
+        [[nodiscard]] explicit operator value&() & {
             return holder;
         }
 
-        explicit operator const value&() const& {
+        [[nodiscard]] explicit operator const value&() const& {
             return holder;
         }
 
-        explicit operator value&&() && {
+        [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
     };
@@ -3320,15 +3375,15 @@ namespace enbt {
             return std::get<enbt::raw_uuid>(holder.content());
         }
 
-        explicit operator value&() & {
+        [[nodiscard]] explicit operator value&() & {
             return holder;
         }
 
-        explicit operator const value&() const& {
+        [[nodiscard]] explicit operator const value&() const& {
             return holder;
         }
 
-        explicit operator value&&() && {
+        [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
     };
