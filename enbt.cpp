@@ -874,13 +874,23 @@ namespace enbt {
     }
 
     void merge_compounds(std::unordered_map<std::string, value>& left, const std::unordered_map<std::string, value>& right) {
-        for (auto& [name, val] : right)
-            left[name] = val;
+        for (auto& [name, val] : right) {
+            auto& it = left[name];
+            if (it.is_compound() && val.is_compound())
+                it.merge(val);
+            else
+                it = val;
+        }
     }
 
     void merge_compounds(std::unordered_map<std::string, value>& left, std::unordered_map<std::string, value>&& right) {
-        for (auto& [name, val] : right)
-            left[name] = std::move(val);
+        for (auto& [name, val] : right) {
+            auto& it = left[name];
+            if (it.is_compound() && val.is_compound())
+                it.merge(std::move(val));
+            else
+                it = std::move(val);
+        }
     }
 
     value& value::merge(const value& copy) & {
