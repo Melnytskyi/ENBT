@@ -145,15 +145,11 @@ namespace enbt {
 
     enbt::type_len calc_type_len(std::size_t len);
 
-    union type_id {
-        struct {
-            std::uint8_t is_signed : 1;
-            enbt::endian endian : 1;
-            enbt::type_len length : 2;
-            enbt::type type : 4;
-        };
-
-        std::uint8_t raw;
+    struct type_id {
+        std::uint8_t is_signed : 1;
+        enbt::endian endian : 1;
+        enbt::type_len length : 2;
+        enbt::type type : 4;
 
         constexpr std::endian get_endian() const {
             if (endian == enbt::endian::big)
@@ -302,24 +298,18 @@ namespace enbt {
 
         constexpr auto operator<=>(const raw_uuid&) const = default;
 
-        // clang-format off
-
         // Format: 8-4-4-4-12 (standard UUID format)
-        std::string to_string() const{
-            char buf[37];
-            snprintf(
-                buf, sizeof(buf),
-                "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                data[0], data[1], data[2], data[3],
-                data[4], data[5],
-                data[6], data[7],
-                data[8], data[9],
-                data[10], data[11], data[12], data[13], data[14], data[15]
-            );
-            return std::string(buf);
+        constexpr std::string to_string() const {
+            std::string res;
+            res.reserve(37);
+            for (std::size_t i = 0; i < 16; i++) {
+                res += "0123456789abcdef"[data[i] >> 4];
+                res += "0123456789abcdef"[data[i] & 0xF];
+                if (i == 3 || i == 5 || i == 7 || i == 9)
+                    res += '-';
+            }
+            return res;
         }
-
-        // clang-format on
 
         static raw_uuid from_string(std::string_view view) {
             uint64_t parts[2] = {std::hash<std::string_view>()(view), std::hash<size_t>()(view.size())};
@@ -458,14 +448,14 @@ namespace enbt {
             return clone_data(data, data_type_id, data_len);
         }
 
-        static std::uint8_t* get_data(std::uint8_t*& data, type_id data_type_id, std::size_t data_len) {
-            if (need_to_free(data_type_id, data_len))
+        static std::uint8_t* get_data(std::uint8_t*& data, type_id data_type_id) {
+            if (need_to_free(data_type_id))
                 return data;
             else
                 return (std::uint8_t*)&data;
         }
 
-        static bool need_to_free(type_id data_type_id, std::size_t data_len) {
+        static bool need_to_free(type_id data_type_id) {
             switch (data_type_id.type) {
             case enbt::type::none:
             case enbt::type::bit:
@@ -479,7 +469,7 @@ namespace enbt {
             }
         }
 
-        static void free_data(std::uint8_t* data, type_id data_type_id, std::size_t data_len) {
+        static void free_data(std::uint8_t* data, type_id data_type_id) {
             if (data == nullptr)
                 return;
             switch (data_type_id.type) {
@@ -531,7 +521,7 @@ namespace enbt {
                 data = nullptr;
                 std::memcpy((char*)&data, (char*)&val, data_len);
             } else {
-                free_data(data, data_type_id, data_len);
+                free_data(data, data_type_id);
                 data = (std::uint8_t*)new T(val);
             }
         }
@@ -542,7 +532,7 @@ namespace enbt {
             if (data_len <= 8) {
                 std::memcpy((char*)&data, (char*)&val, data_len);
             } else {
-                free_data(data, data_type_id, data_len);
+                free_data(data, data_type_id);
                 T* tmp = new T[len / sizeof(T)];
                 for (std::size_t i = 0; i < len; i++)
                     tmp[i] = val[i];
@@ -711,7 +701,7 @@ namespace enbt {
         value(uuid&& copy) noexcept;
 
         ~value() {
-            free_data(data, data_type_id, data_len);
+            free_data(data, data_type_id);
         }
 
         value& operator=(const value& copy) {
@@ -924,7 +914,7 @@ namespace enbt {
         void set_optional(const value& _value) {
             if (data_type_id.type == enbt::type::optional) {
                 data_type_id.is_signed = true;
-                free_data(data, data_type_id, data_len);
+                free_data(data, data_type_id);
                 data = (std::uint8_t*)new value(_value);
             }
         }
@@ -932,14 +922,14 @@ namespace enbt {
         void set_optional(value&& _value) {
             if (data_type_id.type == enbt::type::optional) {
                 data_type_id.is_signed = true;
-                free_data(data, data_type_id, data_len);
+                free_data(data, data_type_id);
                 data = (std::uint8_t*)new value(std::move(_value));
             }
         }
 
         void set_optional() {
             if (data_type_id.type == enbt::type::optional) {
-                free_data(data, data_type_id, data_len);
+                free_data(data, data_type_id);
                 data_type_id.is_signed = false;
             }
         }
@@ -1381,7 +1371,6 @@ namespace enbt {
                 default:
                     throw enbt::exception("Unreachable exception in non debug environment");
                 }
-                return false;
             }
 
             bool operator!=(const const_interator& interator) const {
@@ -1396,7 +1385,6 @@ namespace enbt {
                 default:
                     throw enbt::exception("Unreachable exception in non debug environment");
                 }
-                return true;
             }
 
             std::pair<std::string, const value&> operator*() const {
@@ -1840,7 +1828,7 @@ namespace enbt {
             return proxy->count(key_value);
         }
 
-        [[nodiscard]] bool empty(const key_type& key_value) const noexcept {
+        [[nodiscard]] bool empty() const noexcept {
             return proxy->empty();
         }
 
@@ -1860,7 +1848,7 @@ namespace enbt {
             return proxy->max_bucket_count();
         }
 
-        [[nodiscard]] size_type max_load_factor() const noexcept {
+        [[nodiscard]] auto max_load_factor() const noexcept {
             return proxy->max_load_factor();
         }
 
@@ -2563,11 +2551,11 @@ namespace enbt {
         friend class simple_array<T>;
 
         static constexpr enbt::type_len type_len = []() constexpr {
-            if (sizeof(T) == 1)
+            if constexpr (sizeof(T) == 1)
                 return enbt::type_len::Tiny;
-            else if (sizeof(T) == 2)
+            else if constexpr (sizeof(T) == 2)
                 return enbt::type_len::Short;
-            else if (sizeof(T) == 4)
+            else if constexpr (sizeof(T) == 4)
                 return enbt::type_len::Default;
             else
                 return enbt::type_len::Long;
@@ -2676,11 +2664,11 @@ namespace enbt {
         friend class simple_array<T>;
 
         static constexpr enbt::type_len type_len = []() constexpr {
-            if (sizeof(T) == 1)
+            if constexpr (sizeof(T) == 1)
                 return enbt::type_len::Tiny;
-            else if (sizeof(T) == 2)
+            else if constexpr (sizeof(T) == 2)
                 return enbt::type_len::Short;
-            else if (sizeof(T) == 4)
+            else if constexpr (sizeof(T) == 4)
                 return enbt::type_len::Default;
             else
                 return enbt::type_len::Long;

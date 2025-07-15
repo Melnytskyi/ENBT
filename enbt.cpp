@@ -20,9 +20,9 @@ namespace enbt {
         std::uniform_int_distribution<> dis(0, 255);
         raw_uuid uuid;
         for (std::size_t i = 0; i < 16; i++)
-            uuid.data[i] = dis(gen);
-        uuid.data[6] = (uuid.data[6] & 0x0F) | 0x40;
-        uuid.data[8] = (uuid.data[8] & 0x3F) | 0x80;
+            uuid.data[i] = (uint8_t)dis(gen);
+        uuid.data[6] = uint8_t((uuid.data[6] & 0x0F) | 0x40);
+        uuid.data[8] = uint8_t((uuid.data[8] & 0x3F) | 0x80);
         return uuid;
     }
 
@@ -34,18 +34,18 @@ namespace enbt {
         std::uniform_int_distribution<> dis(0, 255);
         raw_uuid uuid;
         for (std::size_t i = 4; i < 16; i++)
-            uuid.data[i] = dis(gen);
-        uuid.data[6] = (uuid.data[6] & 0x0F) | 0x70;
-        uuid.data[8] = (uuid.data[8] & 0x3F) | 0x80;
-        uuid.data[3] = (current_time >> 24) & 0xFF;
-        uuid.data[2] = (current_time >> 16) & 0xFF;
-        uuid.data[1] = (current_time >> 8) & 0xFF;
-        uuid.data[0] = current_time & 0xFF;
+            uuid.data[i] = (uint8_t)dis(gen);
+        uuid.data[6] = uint8_t((uuid.data[6] & 0x0F) | 0x70);
+        uuid.data[8] = uint8_t((uuid.data[8] & 0x3F) | 0x80);
+        uuid.data[3] = uint8_t((current_time >> 24) & 0xFF);
+        uuid.data[2] = uint8_t((current_time >> 16) & 0xFF);
+        uuid.data[1] = uint8_t((current_time >> 8) & 0xFF);
+        uuid.data[0] = uint8_t(current_time & 0xFF);
         return uuid;
     }
 
     raw_uuid raw_uuid::as_null() {
-        return raw_uuid{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        return {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     }
 
     enbt::type_len calc_type_len(std::size_t len) {
@@ -365,6 +365,7 @@ namespace enbt {
         data_len = 0;
         switch (tid.type) {
         case type::integer:
+        case type::comp_integer:
             switch (data_type_id.length) {
             case type_len::Tiny:
                 if (data_type_id.is_signed)
@@ -398,6 +399,11 @@ namespace enbt {
                 break;
             case type_len::Long:
                 set_data(std::get<double>(val));
+                break;
+            default:
+                data = nullptr;
+                data_len = 0;
+                break;
             }
             break;
         case type::var_integer:
@@ -413,6 +419,11 @@ namespace enbt {
                     set_data(std::get<std::int64_t>(val));
                 else
                     set_data(std::get<std::uint64_t>(val));
+                break;
+            default:
+                data = nullptr;
+                data_len = 0;
+                break;
             }
             break;
         case type::uuid:
@@ -420,7 +431,7 @@ namespace enbt {
             break;
         case type::sarray: {
             //assign and check, not bug
-            if (tid.is_signed = data_type_id.is_signed) {
+            if (tid.is_signed = data_type_id.is_signed; tid.is_signed) {
                 switch (data_type_id.length) {
                 case type_len::Tiny:
                     set_data(std::get<std::int8_t*>(val), length);
@@ -473,6 +484,7 @@ namespace enbt {
             data = (std::uint8_t*)std::get<value*>(val);
             data_len = 0;
             break;
+        case type::none:
         default:
             data = nullptr;
             data_len = 0;
@@ -668,7 +680,7 @@ namespace enbt {
     }
 
     value::value_variants value::get_content(std::uint8_t* data, std::size_t data_len, enbt::type_id data_type_id) {
-        std::uint8_t* real_data = get_data(data, data_type_id, data_len);
+        std::uint8_t* real_data = get_data(data, data_type_id);
         switch (data_type_id.type) {
         case type::integer:
         case type::var_integer:
@@ -954,12 +966,12 @@ namespace enbt {
     void value::freeze() {
         if (data_type_id.type == type::darray) {
             bool first = true;
-            enbt::type_id data_type_id;
+            enbt::type_id check_type_id;
             for (value val : *((std::vector<value>*)data)) {
                 if (first) {
-                    data_type_id = val.data_type_id;
+                    check_type_id = val.data_type_id;
                     first = false;
-                } else if (val.data_type_id != data_type_id) {
+                } else if (val.data_type_id != check_type_id) {
                     throw std::invalid_argument("This array has different types");
                 }
             }
@@ -1496,7 +1508,7 @@ namespace enbt {
                 bit_offset += 7;
             } while ((current_byte & 0b10000000) != 0);
             if constexpr (std::is_signed_v<T>)
-                return endian_helpers::convert_endian(endian, (T)((decoded_int >> 1) ^ -(decoded_int & 1)));
+                return endian_helpers::convert_endian(endian, (T)((decoded_int >> 1) ^ -T(decoded_int & 1)));
             else
                 return endian_helpers::convert_endian(endian, decoded_int);
         }
@@ -1536,10 +1548,10 @@ namespace enbt {
             b.full = endian_helpers::convert_endian(std::endian::big, len);
 
             constexpr struct {
-                std::uint64_t b64 : 62 = -1;
-                std::uint64_t b32 : 30 = -1;
-                std::uint64_t b16 : 14 = -1;
-                std::uint64_t b8 : 6 = -1;
+                std::uint64_t b64 : 62 = 4611686018427387903;
+                std::uint64_t b32 : 30 = 1073741823;
+                std::uint64_t b16 : 14 = 16383;
+                std::uint64_t b8 : 6 = 63;
             } m;
 
             if (len <= m.b8) {
@@ -1589,7 +1601,12 @@ namespace enbt {
         }
 
         void write_type_id(std::ostream& write_stream, enbt::type_id tid) {
-            write_stream << tid.raw;
+            union combined_t {
+                enbt::type_id id;
+                std::uint8_t raw;
+            } combined{.id = tid};
+
+            write_stream << combined.raw;
         }
 
         template <class t>
@@ -1831,14 +1848,22 @@ namespace enbt {
         }
 
         void write_token(std::ostream& write_stream, const value& val) {
-            write_stream << val.type_id().raw;
+            union combined_t {
+                enbt::type_id id;
+                std::uint8_t raw;
+            } combined{.id = val.type_id()};
+
+            write_stream << combined.raw;
             write_value(write_stream, val);
         }
 
         enbt::type_id read_type_id(std::istream& read_stream) {
-            enbt::type_id result;
-            result.raw = __impl__::_read_as_<std::uint8_t>(read_stream);
-            return result;
+            union combined_t {
+                enbt::type_id id;
+                std::uint8_t raw;
+            } combined{.raw = __impl__::_read_as_<std::uint8_t>(read_stream)};
+
+            return combined.id;
         }
 
         template <class T>
@@ -2448,7 +2473,7 @@ namespace enbt {
         value get_value_path(std::istream& read_stream, const value_path& value_path) {
             auto old_pos = read_stream.tellg();
             bool is_bit_value = false;
-            bool bit_value;
+            bool bit_value = false;
             try {
                 for (auto&& tmp : value_path.path) {
                     auto tid = read_type_id(read_stream);
@@ -2668,13 +2693,13 @@ namespace senbt {
             if (pos != std::string_view::npos)
                 string = string.substr(pos);
             if (string.starts_with("//")) {
-                auto pos = string.find_first_of('\n');
+                pos = string.find_first_of('\n');
                 if (pos != std::string_view::npos)
                     string = string.substr(pos);
                 continue;
             }
             if (string.starts_with("/*")) {
-                auto pos = string.find("*/");
+                pos = string.find("*/");
                 if (pos != std::string_view::npos)
                     string = string.substr(pos + 2);
                 continue;
@@ -2947,7 +2972,7 @@ namespace senbt {
         if (string.empty())
             throw std::invalid_argument("expected simple array definition");
         bool is_unsigned = false;
-        if (string[0] == 'u' | string[0] == 'U') {
+        if (string[0] == 'u' || string[0] == 'U') {
             is_unsigned = true;
             string = string.substr(1);
         }
@@ -3023,17 +3048,17 @@ namespace senbt {
         auto str = parse_string(string);
         if (str.size() != 36)
             throw std::invalid_argument("invalid uuid string");
-        enbt::raw_uuid result;
+        enbt::raw_uuid result = enbt::raw_uuid::as_null();
         for (std::size_t i = 0, j = 0; i < 36; i++) {
-            if (i == 8 | i == 13 | i == 18 | i == 23) {
+            if (i == 8 || i == 13 || i == 18 || i == 23) {
                 if (str[i] != '-')
                     throw std::invalid_argument("invalid uuid string");
             } else {
-                if (str[i] >= '0' & str[i] <= '9')
+                if (str[i] >= '0' && str[i] <= '9')
                     result.data[j / 2] |= (str[i] - '0') << (j % 2 ? 0 : 4);
-                else if (str[i] >= 'a' & str[i] <= 'f')
+                else if (str[i] >= 'a' && str[i] <= 'f')
                     result.data[j / 2] |= (str[i] - 'a' + 10) << (j % 2 ? 0 : 4);
-                else if (str[i] >= 'A' & str[i] <= 'F')
+                else if (str[i] >= 'A' && str[i] <= 'F')
                     result.data[j / 2] |= (str[i] - 'A' + 10) << (j % 2 ? 0 : 4);
                 else
                     throw std::invalid_argument("invalid uuid string");
@@ -3133,7 +3158,7 @@ namespace senbt {
         //replaces special symbols with \t \n \b \r \f \' \" and \\
 
         std::string res;
-        res.reserve(string.size() * 1.2);
+        res.reserve(size_t(string.size() * 1.2) + 1);
         for (std::size_t i = 0; i < string.size(); i++) {
             switch (string[i]) {
             case '\t':
@@ -3247,12 +3272,7 @@ namespace senbt {
         case enbt::type::uuid: {
             res += "uuid\"";
             enbt::raw_uuid tmp = value;
-            for (std::size_t i = 0; i < 16; i++) {
-                res += "0123456789abcdef"[tmp.data[i] >> 4];
-                res += "0123456789abcdef"[tmp.data[i] & 0xF];
-                if (i == 3 | i == 5 | i == 7 | i == 9)
-                    res += '-';
-            }
+            res += tmp.to_string();
             res += '"';
             break;
         }
@@ -3390,11 +3410,11 @@ namespace senbt {
                 if (!compress)
                     spaces.push_back('\t');
                 res += "{";
-                for (auto&& [name, value] : compound) {
+                for (auto&& [name, val] : compound) {
                     if (!compress)
                         res += '\n';
                     res += spaces + '"' + de_format(name) + "\": ";
-                    serialize(res, value, spaces, compress, type_erasure);
+                    serialize(res, val, spaces, compress, type_erasure);
                     res += ',';
                 }
                 res.pop_back();
@@ -3413,11 +3433,11 @@ namespace senbt {
             if (!compress)
                 spaces.push_back('\t');
             res += "[";
-            for (auto&& value : arr) {
+            for (auto&& val : arr) {
                 if (!compress)
                     res += '\n';
                 res += spaces;
-                serialize(res, value, spaces, compress, type_erasure);
+                serialize(res, val, spaces, compress, type_erasure);
                 res += ',';
             }
             if (!compress)
@@ -3440,11 +3460,11 @@ namespace senbt {
                 res += "[";
             else
                 res += "a[";
-            for (auto&& value : arr) {
+            for (auto&& val : arr) {
                 if (!compress)
                     res += '\n';
                 res += spaces;
-                serialize(res, value, spaces, compress, type_erasure);
+                serialize(res, val, spaces, compress, type_erasure);
                 res += ',';
             }
             if (!compress)
