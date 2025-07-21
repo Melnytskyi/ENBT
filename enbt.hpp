@@ -1478,10 +1478,23 @@ namespace enbt {
                 iterate_type = enbt.data_type_id;
                 switch (enbt.data_type_id.type) {
                 case enbt::type::sarray:
-                    if (in_begin)
-                        pointer = const_cast<std::uint8_t*>(enbt.get_internal_ptr());
-                    else
-                        pointer = const_cast<std::uint8_t*>(enbt.get_internal_ptr() + enbt.size());
+                    pointer = const_cast<std::uint8_t*>(enbt.get_internal_ptr());
+                    if (!in_begin) {
+                        switch (enbt.data_type_id.length) {
+                        case type_len::Tiny:
+                            pointer = reinterpret_cast<std::uint8_t*>(pointer) + enbt.size();
+                            break;
+                        case type_len::Short:
+                            pointer = reinterpret_cast<std::uint16_t*>(pointer) + enbt.size();
+                            break;
+                        case type_len::Default:
+                            pointer = reinterpret_cast<std::uint32_t*>(pointer) + enbt.size();
+                            break;
+                        case type_len::Long:
+                            pointer = reinterpret_cast<std::uint64_t*>(pointer) + enbt.size();
+                            break;
+                        }
+                    }
                     break;
                 case enbt::type::array:
                 case enbt::type::darray:
