@@ -2338,7 +2338,7 @@ namespace enbt {
             return skip_value(read_stream, read_type_id(read_stream));
         }
 
-        bool find_value_compound(std::istream& read_stream, enbt::type_id tid, const std::string& key) {
+        bool find_value_compound(std::istream& read_stream, enbt::type_id tid, std::string_view key) {
             std::size_t len = read_define_len(read_stream, tid);
             for (std::size_t i = 0; i < len; i++) {
                 if (read_string(read_stream) != key)
@@ -2455,7 +2455,7 @@ namespace enbt {
                         index_array(read_stream, tmp, tid);
                         continue;
                     case enbt::type::compound:
-                        if (!find_value_compound(read_stream, tid, tmp))
+                        if (!find_value_compound(read_stream, tid, (std::string)tmp))
                             return false;
                         continue;
                     default:
@@ -2493,7 +2493,7 @@ namespace enbt {
                         index_array(read_stream, std::stoull(tmp), tid);
                         continue;
                     case enbt::type::compound:
-                        if (!find_value_compound(read_stream, tid, tmp))
+                        if (!find_value_compound(read_stream, tid, (std::string)tmp))
                             return false;
                         continue;
                     default:
@@ -2524,7 +2524,10 @@ namespace enbt {
             if (readed)
                 throw enbt::exception("Invalid read state, item has been already readed");
             readed = true;
-            return read_value(read_stream, current_type_id);
+            if (bit_value != -1)
+                return __impl__::_read_as_<char>(read_stream) & (1 << bit_value);
+            else
+                return read_value(read_stream, current_type_id);
         }
 
         void value_read_stream::skip() {
@@ -2597,7 +2600,13 @@ namespace enbt {
             write_define_len(write_stream, size, type);
         }
 
-        value_write_stream::array::~array() {}
+        value_write_stream::array::~array() {
+            if (current_type_id.type == type::bit)
+                if (bit_i) {
+                    write_stream.write((char*)&bit_value, sizeof(bit_value));
+                    bit_i = 0;
+                }
+        }
 
         value_write_stream::array& value_write_stream::array::write(const enbt::value& it) {
             if (items_to_write == 0)
@@ -2607,7 +2616,16 @@ namespace enbt {
                 write_type_id(write_stream, current_type_id);
                 type_set = true;
             }
-            write_value(write_stream, it);
+            if (current_type_id != it.type_id())
+                throw enbt::exception("array type mismatch");
+            if (current_type_id.type == type::bit) {
+                if (bit_i >= 8) {
+                    bit_i = 0;
+                    write_stream.write((char*)&bit_value, sizeof(bit_value));
+                }
+                bit_value = (((uint8_t)it) & (1 << bit_i));
+            } else
+                write_value(write_stream, it);
             items_to_write--;
             return *this;
         }

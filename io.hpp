@@ -54,7 +54,7 @@ namespace enbt {
 
 
         //move read stream cursor to value in compound, return true if value found
-        bool find_value_compound(std::istream& read_stream, enbt::type_id tid, const std::string& key);
+        bool find_value_compound(std::istream& read_stream, enbt::type_id tid, std::string_view key);
         void index_static_array(std::istream& read_stream, std::uint64_t index, std::uint64_t len, enbt::type_id target_id);
         void index_dyn_array(std::istream& read_stream, std::uint64_t index, std::uint64_t len);
         void index_array(std::istream& read_stream, std::uint64_t index, enbt::type_id arr_tid);
@@ -94,14 +94,17 @@ namespace enbt {
 
             enbt::type_id current_type_id;
             bool readed = false;
+            int8_t bit_value = -1;
 
             value_read_stream(std::istream& read_stream, enbt::type_id current_type_id)
                 : read_stream(read_stream), current_type_id(current_type_id) {}
 
+            value_read_stream(std::istream& read_stream, enbt::type_id current_type_id, uint8_t bit_value)
+                : read_stream(read_stream), current_type_id(current_type_id), bit_value((int8_t)bit_value) {}
+
         public:
             value_read_stream(std::istream& read_stream);
             ~value_read_stream();
-
             enbt::value read(); //default read
             void skip();
 
@@ -109,21 +112,493 @@ namespace enbt {
                 return current_type_id;
             }
 
+            class peek_stream {
+                std::istream& s;
+                enbt::type_id current_type_id;
+                std::streampos pos;
+                int8_t bit_value;
+
+            public:
+                peek_stream(std::istream& s, enbt::type_id current_type_id, int8_t bit_value) : s(s), current_type_id(current_type_id), bit_value(bit_value) {
+                    pos = s.tellg();
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
+                void peek(FN&& fn) {
+                    auto old_pos = s.tellg();
+                    try {
+                        if (old_pos != pos)
+                            read_stream.seekg(pos);
+                        if (bit_value == -1) {
+                            value_read_stream stream(read_stream, current_type_id);
+                            fn(stream);
+                        } else {
+                            value_read_stream stream(read_stream, current_type_id, (uint8_t)bit_value);
+                            fn(stream);
+                        }
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                }
+            };
+
+            class darray {
+                std::istream& read_stream;
+                std::streampos arr_pos;
+                std::size_t current_item = 0;
+                std::size_t items = 0;
+                enbt::type_id current_type_id;
+
+            public:
+                darray(std::istream& read_stream, enbt::type_id current_type_id) : read_stream(read_stream), current_type_id(current_type_id) {
+                    arr_pos = read_stream.tellg();
+                    items = read_define_len(read_stream, current_type_id);
+                }
+
+                ~darray();
+
+                size_t size() const noexcept {
+                    return items;
+                }
+
+                size_t current_index() const noexcept {
+                    return current_item;
+                }
+
+                enbt::value peek_at(std::size_t index) {
+                    if (items <= index)
+                        throw std::out_of_range("Index points out of the array range");
+                    auto old_pos = read_stream.tellg();
+                    enbt::value res;
+                    try {
+                        if (old_pos != arr_pos)
+                            read_stream.seekg(arr_pos);
+
+                        index_array(read_stream, index, current_type_id);
+                        value_read_stream stream(read_stream);
+                        res = stream.read();
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                    return res;
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
+                void peek_at(std::size_t index, FN&& fn) {
+                    if (items <= index)
+                        throw std::out_of_range("Index points out of the array range");
+                    auto old_pos = read_stream.tellg();
+                    enbt::value res;
+                    try {
+                        if (old_pos != arr_pos)
+                            read_stream.seekg(arr_pos);
+
+                        index_array(read_stream, index, current_type_id);
+                        value_read_stream stream(read_stream);
+                        fn(stream);
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                    return res;
+                }
+
+                std::vector<enbt::value> read() {
+                    std::vector<enbt::value> res;
+                    res.reserve(items - current_item);
+                    iterable([&res](value_read_stream& stream) {
+                        res.push_back(stream.read());
+                    });
+                    return res;
+                }
+
+                enbt::value read_one() {
+                    if (current_item == items)
+                        throw std::out_of_range("Tried to read value out of arrays range.");
+                    value_read_stream inner(read_stream);
+                    return inner.read();
+                }
+
+                template <class FN>
+                darray& read_one(FN&& fn)
+                    requires std::is_invocable_v<FN, value_read_stream&>
+                {
+                    if (current_item == items)
+                        throw std::out_of_range("Tried to read value out of arrays range.");
+                    value_read_stream inner(read_stream);
+                    fn(inner);
+                    current_item++;
+                    return *this;
+                }
+
+                template <class FN>
+                darray& iterable(const FN& fn)
+                    requires std::is_invocable_v<FN, value_read_stream&>
+                {
+                    while (current_item != items)
+                        read_one(fn);
+                    return *this;
+                }
+            };
+
+            class array {
+                std::istream& read_stream;
+                std::streampos arr_pos;
+                std::size_t current_item = 0;
+                std::size_t items = 0;
+                enbt::type_id arr_type_id;
+                enbt::type_id current_type_id;
+
+            public:
+                array(std::istream& read_stream, enbt::type_id arr_type_id) : read_stream(read_stream), arr_type_id(arr_type_id) {
+                    arr_pos = read_stream.tellg();
+                    items = read_define_len(read_stream, arr_type_id);
+                    if (items)
+                        current_type_id = read_type_id(read_stream);
+                }
+
+                ~array() {
+                    iterable([](auto& it) {
+                        it.skip();
+                    });
+                }
+
+                size_t size() const noexcept {
+                    return items;
+                }
+
+                size_t current_index() const noexcept {
+                    return current_item;
+                }
+
+                std::vector<enbt::value> read() {
+                    std::vector<enbt::value> res;
+                    res.reserve(items - current_item);
+                    iterable([&res](value_read_stream& stream) {
+                        res.push_back(stream.read());
+                    });
+                    return res;
+                }
+
+                enbt::value peek_at(std::size_t index) {
+                    if (items <= index)
+                        throw std::out_of_range("Index points out of the array range");
+                    auto old_pos = read_stream.tellg();
+                    enbt::value res;
+                    try {
+                        if (old_pos != arr_pos)
+                            read_stream.seekg(arr_pos);
+                        if (current_type_id.type == type::bit) {
+                            char bool_res[1];
+                            read_stream.read(bool_res, 1);
+                            return bool(bool_res[0] & (1 << (index % 8)));
+                        }
+                        index_array(read_stream, index, arr_type_id);
+                        value_read_stream stream(read_stream);
+                        res = stream.read();
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                    return res;
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
+                array& peek_at(std::size_t index, FN&& fn) {
+                    if (items <= index)
+                        throw std::out_of_range("Index points out of the array range");
+                    auto old_pos = read_stream.tellg();
+                    enbt::value res;
+                    try {
+                        if (old_pos != arr_pos)
+                            read_stream.seekg(arr_pos);
+
+                        index_array(read_stream, index, arr_type_id);
+                        if (current_type_id.type == type::bit) {
+                            value_read_stream stream(read_stream, current_type_id, uint8_t(index % 8));
+                            fn(stream);
+                        } else {
+                            value_read_stream stream(read_stream, current_type_id);
+                            fn(stream);
+                        }
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                    return *this;
+                }
+
+                enbt::value read_one() {
+                    enbt::value res;
+                    read_one([&res](value_read_stream& s) {
+                        res = s.read();
+                    });
+                    return res;
+                }
+
+                template <class FN>
+                array& read_one(FN&& fn)
+                    requires std::is_invocable_v<FN, value_read_stream&>
+                {
+                    if (current_item == items)
+                        throw std::out_of_range("Tried to read value out of arrays range.");
+
+                    if (current_type_id.type == type::bit) {
+                        value_read_stream stream(read_stream, current_type_id, uint8_t(current_item % 8));
+                        fn(stream);
+                    } else {
+                        value_read_stream stream(read_stream, current_type_id);
+                        fn(stream);
+                    }
+                    current_item++;
+                    return *this;
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
+                array& iterable(const FN& fn) {
+                    while (current_item != items)
+                        read_one(fn);
+                    return *this;
+                }
+            };
+
+            template <class T>
+            class sarray {
+                std::istream& read_stream;
+                std::size_t current_item = 0;
+                std::size_t items = 0;
+                std::streampos arr_pos;
+                enbt::type_id current_type_id;
+
+                sarray(std::istream& read_stream, enbt::type_id current_type_id)
+                    : read_stream(read_stream), current_type_id(current_type_id) {}
+
+            public:
+                sarray make_sarray(std::istream& read_stream, enbt::type_id check) {
+                    static constexpr enbt::type_id check_s = simple_array<T>::enbt_type;
+                    if (check.length != check_s.length || check.type != check_s.type || check.is_signed != check_s.is_signed)
+                        throw std::invalid_argument("Type mismatch");
+                    sarray res(read_stream, check);
+                    res.items = read_compress_len(read_stream);
+                    return res;
+                }
+
+                ~sarray() {
+                    if (current_item != items)
+                        read_stream.seekg((items - current_item) * sizeof(T), std::istream::cur);
+                }
+
+                size_t size() const noexcept {
+                    return items;
+                }
+
+                size_t current_index() const noexcept {
+                    return current_item;
+                }
+
+                std::vector<T> read() {
+                    std::vector<T> res;
+                    res.reserve(items - current_item);
+                    iterable([&res](T item) {
+                        res.push_back(item);
+                    });
+                    return res;
+                }
+
+                T peek_at(std::size_t index) {
+                    if (items <= index)
+                        throw std::out_of_range("Index points out of the array range");
+                    auto old_pos = read_stream.tellg();
+                    T val;
+                    try {
+                        read_stream.seekg(arr_pos + index * sizeof(T));
+                        read_stream.read((char*)&val, sizeof(T));
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                    val = enbt::endian_helpers::convert_endian(current_type_id.get_endian(), val);
+                    return val;
+                }
+
+                T read_one() {
+                    if (current_item == items)
+                        throw std::out_of_range("Tried to read value out of arrays range.");
+                    T val;
+                    read_stream.read((char*)&val, sizeof(T));
+                    val = enbt::endian_helpers::convert_endian(current_type_id.get_endian(), val);
+                    ++current_item;
+                    return val;
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, T>)
+                darray& read_one(FN&& fn) {
+                    fn(read_one());
+                    return *this;
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, T>)
+                darray& iterable(const FN& fn) {
+                    while (current_item != items)
+                        read_one(fn);
+                    return *this;
+                }
+            };
+
+            class compound {
+                std::istream& read_stream;
+                std::size_t current_item = 0;
+                std::size_t items = 0;
+                std::streampos comp_pos;
+                enbt::type_id current_type_id;
+
+            public:
+                compound(std::istream& read_stream, enbt::type_id current_type_id) : read_stream(read_stream), current_type_id(current_type_id) {
+                    comp_pos = read_stream.tellg();
+                    items = read_define_len(read_stream, current_type_id);
+                }
+
+                ~compound() {
+                    iterable([](auto, auto& s) {
+                        s.skip();
+                    });
+                }
+
+                size_t size() const noexcept {
+                    return items;
+                }
+
+                size_t current_index() const noexcept {
+                    return current_item;
+                }
+
+                std::pair<std::string, enbt::value> read() {
+                    if (current_item == items)
+                        throw std::out_of_range("Tried to read value out of compounds range.");
+                    auto str = read_string(read_stream);
+                    current_item++;
+                    return {str, read_token(read_stream)};
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, std::string&, value_read_stream&>)
+                compound& read(FN&& fn) {
+                    if (current_item == items)
+                        throw std::out_of_range("Tried to read value out of compounds range.");
+                    auto str = read_string(read_stream);
+                    value_read_stream inner(read_stream);
+                    fn(str, inner);
+                    current_item++;
+                    return *this;
+                }
+
+                enbt::value peek_at(std::string_view index) {
+                    auto old_pos = read_stream.tellg();
+                    enbt::value res;
+                    try {
+                        if (old_pos != comp_pos)
+                            read_stream.seekg(comp_pos);
+                        if (find_value_compound(read_stream, current_type_id, index)) {
+                            value_read_stream stream(read_stream);
+                            res = stream.read();
+                        } else
+                            throw enbt::exception("Key not found");
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                    return res;
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
+                void peek_at(std::string_view index, FN&& fn) {
+                    auto old_pos = read_stream.tellg();
+                    try {
+                        if (old_pos != comp_pos)
+                            read_stream.seekg(comp_pos);
+                        if (find_value_compound(read_stream, current_type_id, index)) {
+                            value_read_stream stream(read_stream);
+                            fn(stream);
+                        } else
+                            throw enbt::exception("Key not found");
+                    } catch (...) {
+                        read_stream.seekg(old_pos);
+                        throw;
+                    }
+                    read_stream.seekg(old_pos);
+                }
+
+                template <class FN>
+                    requires(std::is_invocable_v<FN, std::string&, value_read_stream&>)
+                compound& iterable(const FN& fn) {
+                    while (current_item != items)
+                        read(fn);
+                    return *this;
+                }
+            };
+
+            darray read_darray() {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
+                readed = true;
+                return darray(read_stream, current_type_id);
+            }
+
+            array read_array() {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
+                readed = true;
+                return array(read_stream, current_type_id);
+            }
+
+            compound read_compound() {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
+                readed = true;
+                return compound(read_stream, current_type_id);
+            }
+
+            template <class T>
+            sarray<T> read_sarray() {
+                if (readed)
+                    throw enbt::exception("Invalid read state, item has been already readed");
+                readed = true;
+                return sarray<T>::make_sarray(read_stream, current_type_id);
+            }
+
+            peek_stream make_peek() {
+                return {read_stream, current_type_id, bit_value};
+            }
+
+
             template <class FN>
             value_read_stream& peek_at(std::uint64_t index, FN&& callback) {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
-                auto old_state = read_stream.rdstate();
                 auto old_pos = read_stream.tellg();
                 try {
                     index_array(read_stream, index, current_type_id);
                     value_read_stream stream(read_stream);
                     callback(stream);
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -135,19 +610,16 @@ namespace enbt {
             value_read_stream& peek_at(const std::string& chr, FN&& callback) {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
-                auto old_state = read_stream.rdstate();
                 auto old_pos = read_stream.tellg();
                 try {
                     if (find_value_compound(read_stream, current_type_id, chr)) {
                         value_read_stream stream(read_stream);
                         callback(stream);
-                        read_stream.setstate(old_state);
                         read_stream.seekg(old_pos);
                         readed = false;
                     } else
                         throw enbt::exception("Key not found");
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -158,30 +630,26 @@ namespace enbt {
             size_t peek_size();
 
             template <class FN>
-            void iterate(FN&& callback)
-                requires std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>
-            {
+                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>)
+            void iterate(FN&& callback) {
                 iterate([](std::uint64_t) {}, std::move(callback));
             }
 
             template <class FN>
-            void iterate(FN&& callback)
-                requires std::is_invocable_v<FN, value_read_stream&>
-            {
+                requires(std::is_invocable_v<FN, value_read_stream&>)
+            void iterate(FN&& callback) {
                 iterate([](std::uint64_t) {}, std::move(callback));
             }
 
             template <class FN>
-            void peek_iterate(FN&& callback)
-                requires std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>
-            {
+                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>)
+            void peek_iterate(FN&& callback) {
                 peek_iterate([](std::uint64_t) {}, std::move(callback));
             }
 
             template <class FN>
-            void peek_iterate(FN&& callback)
-                requires std::is_invocable_v<FN, value_read_stream&>
-            {
+                requires(std::is_invocable_v<FN, value_read_stream&>)
+            void peek_iterate(FN&& callback) {
                 peek_iterate([](std::uint64_t) {}, std::move(callback));
             }
 
@@ -214,15 +682,12 @@ namespace enbt {
 
             template <class T>
             void peek_iterate_into(T* arr, size_t size) {
-                auto old_state = read_stream.rdstate();
                 auto old_pos = read_stream.tellg();
                 try {
                     iterate_into(arr, size);
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -261,16 +726,13 @@ namespace enbt {
 
             template <class T>
             std::vector<T> peek_iterate_into() {
-                auto old_state = read_stream.rdstate();
                 auto old_pos = read_stream.tellg();
                 try {
                     auto res = iterate_into<T>();
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     return res;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -278,9 +740,8 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
-            void iterate(SIZE_FN&& size_callback, FN&& callback)
-                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
-            {
+                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
+            void iterate(SIZE_FN&& size_callback, FN&& callback) {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::compound) {
@@ -297,18 +758,14 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
-            void peek_iterate(SIZE_FN&& size_callback, FN&& callback)
-                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
-            {
-                auto old_state = read_stream.rdstate();
+                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
+            void peek_iterate(SIZE_FN&& size_callback, FN&& callback) {
                 auto old_pos = read_stream.tellg();
                 try {
                     iterate(size_callback, callback);
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -316,9 +773,8 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
-            void iterate(SIZE_FN&& size_callback, FN&& callback)
-                requires std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
-            {
+                requires(std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
+            void iterate(SIZE_FN&& size_callback, FN&& callback) {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::array) {
@@ -351,18 +807,14 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
-            void peek_iterate(SIZE_FN&& size_callback, FN&& callback)
-                requires std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>
-            {
-                auto old_state = read_stream.rdstate();
+                requires(std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
+            void peek_iterate(SIZE_FN&& size_callback, FN&& callback) {
                 auto old_pos = read_stream.tellg();
                 try {
                     iterate(size_callback, callback);
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -370,9 +822,8 @@ namespace enbt {
             }
 
             template <class FN>
-            void join_log_item(FN&& callback)
-                requires std::is_invocable_v<FN, value_read_stream&>
-            {
+                requires(std::is_invocable_v<FN, value_read_stream&>)
+            void join_log_item(FN&& callback) {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::log_item) {
@@ -385,18 +836,14 @@ namespace enbt {
             }
 
             template <class FN>
-            void peek_join_log_item(FN&& callback)
-                requires std::is_invocable_v<FN, value_read_stream&>
-            {
-                auto old_state = read_stream.rdstate();
+                requires(std::is_invocable_v<FN, value_read_stream&>)
+            void peek_join_log_item(FN&& callback) {
                 auto old_pos = read_stream.tellg();
                 try {
                     join_log_item(callback);
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -404,21 +851,19 @@ namespace enbt {
             }
 
             template <class COMPOUND_FN, class ARRAY_FN>
+                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>))
             void blind_iterate(
                 COMPOUND_FN&& compound,
                 ARRAY_FN&& array_or_log_item
-            )
-                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>)
-            {
+            ) {
                 blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
             }
 
             template <class SIZE_FN, class COMPOUND_FN, class ARRAY_FN>
+                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>)
             void blind_iterate(
                 SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item
-            )
-                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
-            {
+            ) {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::compound) {
@@ -464,18 +909,14 @@ namespace enbt {
             }
 
             template <class COMPOUND_FN, class ARRAY_FN>
-            void peek_blind_iterate(COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item)
-                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>)
-            {
-                auto old_state = read_stream.rdstate();
+                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>))
+            void peek_blind_iterate(COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item) {
                 auto old_pos = read_stream.tellg();
                 try {
                     blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -483,18 +924,14 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class COMPOUND_FN, class ARRAY_FN>
-            void peek_blind_iterate(SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item)
-                requires std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>
-            {
-                auto old_state = read_stream.rdstate();
+                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>)
+            void peek_blind_iterate(SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item) {
                 auto old_pos = read_stream.tellg();
                 try {
                     blind_iterate(size_callback, std::move(compound), std::move(array_or_log_item));
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                 } catch (...) {
-                    read_stream.setstate(old_state);
                     read_stream.seekg(old_pos);
                     readed = false;
                     throw;
@@ -561,6 +998,8 @@ namespace enbt {
                 std::ostream& write_stream;
                 std::size_t items_to_write = 0;
                 enbt::type_id current_type_id;
+                std::int8_t bit_i = 0;
+                std::uint8_t bit_value = 0;
                 bool type_set = false;
 
                 template <class FN>
@@ -572,6 +1011,8 @@ namespace enbt {
                     fn(inner);
                     if (!type_set) {
                         current_type_id = inner.get_written_type_id();
+                        if (current_type_id.type == type::bit)
+                            throw enbt::exception("Bit type for in type::array is compressed, using functional iterable is not allowed.");
                         type_set = true;
                     } else if (inner.get_written_type_id() != current_type_id) {
                         write_stream.seekp(pos);
@@ -598,9 +1039,7 @@ namespace enbt {
                 template <class Iterable, class FN>
                 array& iterable(const Iterable& iter) {
                     for (const auto& item : iter)
-                        write_fn([&](value_write_stream& inner) {
-                            inner.write(item);
-                        });
+                        write(item);
                     return *this;
                 }
             };
