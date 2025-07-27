@@ -3165,10 +3165,14 @@ namespace senbt {
     }
 
     enbt::value parse(std::string_view string) {
+        if (string.empty())
+            return enbt::value();
         return parse_(string);
     }
 
     enbt::value parse_mod(std::string_view& string) {
+        if (string.empty())
+            return enbt::value();
         return parse_(string);
     }
 
