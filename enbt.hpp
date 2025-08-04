@@ -136,6 +136,7 @@ namespace enbt {
         string,   //[(len)][chars]  /utf8 string
         log_item, //[(log entry size in bytes)] [log entry] used for faster log reading
     };
+
     enum class type_len : std::uint8_t { // array string, e.t.c. length's always little endian
         Tiny,
         Short,
@@ -2952,6 +2953,22 @@ namespace enbt {
             fixed_type = ref.fixed_type;
         }
 
+        fixed_array& operator=(const value& copy) {
+            if (!copy.is_fixed_array())
+                throw enbt::exception("value is not a fixed array");
+            holder = copy;
+            proxy = std::get<std::vector<value>*>(holder.content());
+            return *this;
+        }
+
+        fixed_array& operator=(value&& move) {
+            if (!move.is_fixed_array())
+                throw enbt::exception("value is not a fixed array");
+            holder = std::move(move);
+            proxy = std::get<std::vector<value>*>(holder.content());
+            return *this;
+        }
+
         fixed_array& operator=(const fixed_array& copy) {
             holder = copy.holder;
             proxy = std::get<std::vector<value>*>(holder.content());
@@ -3037,7 +3054,7 @@ namespace enbt {
         }
 
         dynamic_array& operator=(const value& copy) {
-            if (copy.get_type() != enbt::type::darray)
+            if (!copy.is_dyn_array())
                 throw enbt::exception("value is not a dynamic array");
             holder = copy;
             proxy = std::get<std::vector<value>*>(holder.content());
@@ -3045,7 +3062,7 @@ namespace enbt {
         }
 
         dynamic_array& operator=(value&& copy) {
-            if (copy.get_type() != enbt::type::darray)
+            if (!copy.is_dyn_array())
                 throw enbt::exception("value is not a dynamic array");
             holder = std::move(copy);
             proxy = std::get<std::vector<value>*>(holder.content());
@@ -3155,6 +3172,24 @@ namespace enbt {
             return *this;
         }
 
+        simple_array& operator=(const value& copy) {
+            if (copy.get_type() != enbt_type.type || copy.get_type_len() != enbt_type.length || copy.get_type_sign() != enbt_type.is_signed)
+                throw enbt::exception("value is not a same simple_array");
+            holder = copy;
+            simple_array_ref<T>::proxy = std::get<T*>(holder.content());
+            simple_array_ref<T>::size_ = holder.size();
+            return *this;
+        }
+
+        simple_array& operator=(value&& move) {
+            if (move.get_type() != enbt_type.type || move.get_type_len() != enbt_type.length || move.get_type_sign() != enbt_type.is_signed)
+                throw enbt::exception("value is not a same simple_array");
+            holder = std::move(move);
+            simple_array_ref<T>::proxy = std::get<T*>(holder.content());
+            simple_array_ref<T>::size_ = holder.size();
+            return *this;
+        }
+
         [[nodiscard]] bool operator==(const simple_array& tag) const {
             return holder == tag.holder;
         }
@@ -3223,6 +3258,20 @@ namespace enbt {
             return *this;
         }
 
+        bit& operator=(const value& copy) {
+            if (copy.is_bit())
+                throw enbt::exception("value is not a bit");
+            holder = copy;
+            return *this;
+        }
+
+        bit& operator=(value&& move) {
+            if (move.is_bit())
+                throw enbt::exception("value is not a bit");
+            holder = std::move(move);
+            return *this;
+        }
+
         bit& operator=(bit&& tag) {
             holder = std::move(tag.holder);
             return *this;
@@ -3259,11 +3308,15 @@ namespace enbt {
         optional(const value& abstract) {
             if (abstract.get_type() == enbt::type::optional)
                 holder = abstract;
+            else
+                holder = value(true, std::move(abstract));
         }
 
         optional(value&& abstract) {
             if (abstract.get_type() == enbt::type::optional)
                 holder = std::move(abstract);
+            else
+                holder = value(true, std::move(abstract));
         }
 
         optional(const optional& tag) {
@@ -3281,6 +3334,22 @@ namespace enbt {
 
         optional& operator=(optional&& tag) {
             holder = std::move(tag.holder);
+            return *this;
+        }
+
+        optional& operator=(const value& copy) {
+            if (copy.is_optional())
+                holder = value(true, std::move(copy));
+            else
+                holder = copy;
+            return *this;
+        }
+
+        optional& operator=(value&& move) {
+            if (move.is_optional())
+                holder = value(true, std::move(move));
+            else
+                holder = std::move(move);
             return *this;
         }
 
@@ -3371,6 +3440,21 @@ namespace enbt {
             holder = value;
             return *this;
         }
+
+        uuid& operator=(const value& copy) {
+            if (copy.is_uuid())
+                throw enbt::exception("value is not a uuid");
+            holder = copy;
+            return *this;
+        }
+
+        uuid& operator=(value&& move) {
+            if (move.is_uuid())
+                throw enbt::exception("value is not a uuid");
+            holder = std::move(move);
+            return *this;
+        }
+
 
         operator enbt::raw_uuid() const {
             return std::get<enbt::raw_uuid>(holder.content());
