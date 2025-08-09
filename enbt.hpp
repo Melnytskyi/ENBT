@@ -442,7 +442,7 @@ namespace enbt {
         }
 
     private:
-        static value_variants get_content(std::uint8_t* data, std::size_t data_len, type_id data_type_id);
+        static value_variants get_content(std::uint8_t* data, type_id data_type_id);
         static std::uint8_t* clone_data(std::uint8_t* data, type_id data_type_id, std::size_t data_len);
 
         std::uint8_t* clone_data() const {
@@ -746,7 +746,7 @@ namespace enbt {
                 else
                     operator=(value(false, value{}));
             } else
-                operator=(value(set_value));
+                operator=((value)set_value);
             return *this;
         }
 
@@ -761,7 +761,7 @@ namespace enbt {
                 else
                     operator=(value(false, value{}));
             } else
-                operator=(value(std::forward<Ty>(set_value)));
+                operator=((value)std::forward<Ty>(set_value));
             return *this;
         }
 
@@ -909,7 +909,7 @@ namespace enbt {
         }
 
         value_variants content() const {
-            return get_content(data, data_len, data_type_id);
+            return get_content(data, data_type_id);
         }
 
         void set_optional(const value& _value) {
@@ -1195,6 +1195,10 @@ namespace enbt {
 
         bool operator!=(const value& enbt) const {
             return !operator==(enbt);
+        }
+
+        std::strong_ordering operator<=>(const value& enbt) const {
+            return operator==(enbt) ? std::strong_ordering::equal : std::strong_ordering::less;
         }
 
         operator bool() const;
@@ -1889,6 +1893,10 @@ namespace enbt {
         [[nodiscard]] const_iterator cend() const {
             return proxy->cend();
         }
+
+        std::strong_ordering operator<=>(const compound_const_ref& enbt) const {
+            return *proxy == *enbt.proxy ? std::strong_ordering::equal : std::strong_ordering::less;
+        }
     };
 
     class compound_ref : public compound_const_ref {
@@ -2209,7 +2217,7 @@ namespace enbt {
                         case enbt::type::comp_integer:
                         case enbt::type::floating:
                         case enbt::type::string:
-                            (*proxy)[index] = std::move(to_set.cast_to(fixed_type));
+                            (*proxy)[index] = to_set.cast_to(fixed_type);
                             return;
                         default:
                             break;
@@ -2309,6 +2317,10 @@ namespace enbt {
 
         [[nodiscard]] const value& back() const {
             return proxy->back();
+        }
+
+        std::strong_ordering operator<=>(const fixed_array_ref& enbt) const {
+            return *proxy == *enbt.proxy ? std::strong_ordering::equal : std::strong_ordering::less;
         }
     };
 
@@ -2551,6 +2563,10 @@ namespace enbt {
         [[nodiscard]] value& back() {
             return proxy->back();
         }
+
+        std::strong_ordering operator<=>(const dynamic_array_ref& enbt) const {
+            return *proxy == *enbt.proxy ? std::strong_ordering::equal : std::strong_ordering::less;
+        }
     };
 
     template <class T>
@@ -2666,6 +2682,17 @@ namespace enbt {
 
         [[nodiscard]] const T* crend() const {
             return proxy;
+        }
+
+        std::strong_ordering operator<=>(const simple_array_const_ref& enbt) const {
+            if (size_ != enbt.size_)
+                return size_ < enbt.size_ ? std::strong_ordering::less : std::strong_ordering::greater;
+
+            for (std::size_t i = 0; i < size_; ++i) {
+                if (proxy[i] != enbt.proxy[i])
+                    return proxy[i] < enbt.proxy[i] ? std::strong_ordering::less : std::strong_ordering::greater;
+            }
+            return std::strong_ordering::equal;
         }
     };
 
@@ -2814,6 +2841,17 @@ namespace enbt {
 
         [[nodiscard]] const T* crend() const {
             return proxy;
+        }
+
+        std::strong_ordering operator<=>(const simple_array_ref& enbt) const {
+            if (size_ != enbt.size_)
+                return size_ < enbt.size_ ? std::strong_ordering::less : std::strong_ordering::greater;
+
+            for (std::size_t i = 0; i < size_; ++i) {
+                if (proxy[i] != enbt.proxy[i])
+                    return proxy[i] < enbt.proxy[i] ? std::strong_ordering::less : std::strong_ordering::greater;
+            }
+            return std::strong_ordering::equal;
         }
     };
 
@@ -3297,6 +3335,10 @@ namespace enbt {
         [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
         }
+
+        std::strong_ordering operator<=>(const bit& enbt) const {
+            return holder == enbt.holder ? std::strong_ordering::equal : std::strong_ordering::less;
+        }
     };
 
     class optional {
@@ -3361,6 +3403,22 @@ namespace enbt {
             holder = value((value*)nullptr, enbt::type_id(enbt::type::optional, enbt::type_len::Tiny, false), 0, false);
         }
 
+        value& operator*() {
+            return get();
+        }
+
+        const value& operator*() const {
+            return get();
+        }
+
+        value* operator->() {
+            return &get();
+        }
+
+        const value* operator->() const {
+            return &get();
+        }
+
         [[nodiscard]] value& get() {
             if (auto res = holder.get_optional(); res != nullptr)
                 return *res;
@@ -3399,6 +3457,10 @@ namespace enbt {
 
         [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
+        }
+
+        std::strong_ordering operator<=>(const optional& enbt) const {
+            return holder == enbt.holder ? std::strong_ordering::equal : std::strong_ordering::less;
         }
     };
 
@@ -3470,6 +3532,10 @@ namespace enbt {
 
         [[nodiscard]] explicit operator value&&() && {
             return std::move(holder);
+        }
+
+        std::strong_ordering operator<=>(const uuid& enbt) const {
+            return holder == enbt.holder ? std::strong_ordering::equal : std::strong_ordering::less;
         }
     };
 }

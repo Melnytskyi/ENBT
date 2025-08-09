@@ -360,7 +360,7 @@ namespace enbt {
         data_type_id = enbt::type_id{type::floating, type_len::Long, endian};
     }
 
-    value::value(value_variants val, enbt::type_id tid, std::size_t length, bool convert_endian) {
+    value::value(value_variants val, enbt::type_id tid, std::size_t length, bool _) {
         data_type_id = tid;
         data_len = 0;
         switch (tid.type) {
@@ -679,7 +679,7 @@ namespace enbt {
         throw std::invalid_argument("Invalid tid, cannot index array");
     }
 
-    value::value_variants value::get_content(std::uint8_t* data, std::size_t data_len, enbt::type_id data_type_id) {
+    value::value_variants value::get_content(std::uint8_t* data, enbt::type_id data_type_id) {
         std::uint8_t* real_data = get_data(data, data_type_id);
         switch (data_type_id.type) {
         case type::integer:
@@ -1224,7 +1224,7 @@ namespace enbt {
         };
         auto res = convert_(id, *this);
         res.data_type_id.endian = id.endian;
-        return std::move(res);
+        return res;
     }
 
     value::operator const std::uint8_t*() const {
@@ -1409,7 +1409,7 @@ namespace enbt {
                     return {"", value(*(std::int64_t*)pointer)};
                     break;
                 default:
-                    break;
+                    std::unreachable();
                 }
             } else {
                 switch (iterate_type.length) {
@@ -1426,10 +1426,9 @@ namespace enbt {
                     return {"", value(*(std::uint64_t*)pointer)};
                     break;
                 default:
-                    break;
+                    std::unreachable();
                 }
             }
-            break;
         case type::array:
         case type::darray:
             return {"", value(*(*(std::vector<value>::iterator*)pointer))};
@@ -1440,8 +1439,9 @@ namespace enbt {
                 value(tmp->second)
             );
         }
+        default:
+            throw exception("Unreachable exception in non debug environment");
         }
-        throw exception("Unreachable exception in non debug environment");
     }
 
     compound_ref compound_ref::merge(const value& copy) & {
@@ -1772,6 +1772,9 @@ namespace enbt {
         void write_value(std::ostream& write_stream, const value& val) {
             enbt::type_id tid = val.type_id();
             switch (tid.type) {
+            case enbt::type::none:
+            case enbt::type::bit:
+                return;
             case enbt::type::integer:
                 switch (tid.length) {
                 case enbt::type_len::Tiny:
@@ -1843,6 +1846,7 @@ namespace enbt {
             case enbt::type::string:
                 return write_string(write_stream, val);
             case enbt::type::log_item: {
+                return write_log_item(write_stream, val);
             }
             }
         }
@@ -2485,7 +2489,7 @@ namespace enbt {
                         index_static_array(read_stream, index, len, target_id);
                         if (target_id.type == enbt::type::bit) {
                             is_bit_value = true;
-                            bit_value = __impl__::_read_as_<std::uint8_t>(read_stream) << index % 8;
+                            bit_value = bool(__impl__::_read_as_<std::uint8_t>(read_stream) << (index % 8));
                         }
                         continue;
                     }
@@ -2727,11 +2731,11 @@ namespace senbt {
     }
 
     uint64_t parse_numeric_part(std::string_view string) {
-        if (string.starts_with("0x") | string.starts_with("0X"))
+        if (string.starts_with("0x") || string.starts_with("0X"))
             return std::stoull(std::string(string), nullptr, 16);
-        else if (string.starts_with("0b") | string.starts_with("0B"))
+        else if (string.starts_with("0b") || string.starts_with("0B"))
             return std::stoull(std::string(string), nullptr, 2);
-        else if (string.starts_with("0o") | string.starts_with("0O"))
+        else if (string.starts_with("0o") || string.starts_with("0O"))
             return std::stoull(std::string(string), nullptr, 8);
         else
             return std::stoull(std::string(string), nullptr, 10);
@@ -2744,14 +2748,14 @@ namespace senbt {
         bool is_comp = false;
         enbt::type_len len = enbt::type_len::Long;
 
-        if (string.starts_with('-') | string.starts_with('+'))
+        if (string.starts_with('-') || string.starts_with('+'))
             string = string.substr(1);
 
-        if (string.ends_with('f') | string.ends_with('F')) {
+        if (string.ends_with('f') || string.ends_with('F')) {
             is_floating = true;
             len = enbt::type_len::Default;
             string = string.substr(0, string.size() - 1);
-        } else if (string.ends_with('d') | string.ends_with('D')) {
+        } else if (string.ends_with('d') || string.ends_with('D')) {
             is_floating = true;
             len = enbt::type_len::Long;
             string = string.substr(0, string.size() - 1);
@@ -2774,13 +2778,13 @@ namespace senbt {
         } else if (string.ends_with('i')) {
             len = enbt::type_len::Default;
             string = string.substr(0, string.size() - 1);
-        } else if (string.ends_with('I') | string.ends_with('l') | string.ends_with('L')) {
+        } else if (string.ends_with('I') || string.ends_with('l') || string.ends_with('L')) {
             len = enbt::type_len::Long;
             string = string.substr(0, string.size() - 1);
-        } else if (string.ends_with('s') | string.ends_with('S')) {
+        } else if (string.ends_with('s') || string.ends_with('S')) {
             len = enbt::type_len::Short;
             string = string.substr(0, string.size() - 1);
-        } else if (string.ends_with('b') | string.ends_with('B')) {
+        } else if (string.ends_with('b') || string.ends_with('B')) {
             len = enbt::type_len::Tiny;
             string = string.substr(0, string.size() - 1);
         }
@@ -3055,7 +3059,7 @@ namespace senbt {
     }
 
     enbt::value parse_uuid(std::string_view& string) {
-        if (string.starts_with("uuid") | string.starts_with("UUID"))
+        if (string.starts_with("uuid") || string.starts_with("UUID"))
             string = string.substr(4);
         else
             string = string.substr(1);
@@ -3088,29 +3092,29 @@ namespace senbt {
     }
 
     enbt::value parse_true(std::string_view string) {
-        if (string == "t" | string == "T")
+        if (string == "t" || string == "T")
             return enbt::value(true);
-        else if (string == "true" | string == "TRUE")
+        else if (string == "true" || string == "TRUE")
             return enbt::value(true);
         else
             throw std::invalid_argument("invalid boolean value");
     }
 
     enbt::value parse_false(std::string_view string) {
-        if (string == "f" | string == "F")
+        if (string == "f" || string == "F")
             return enbt::value(false);
-        else if (string == "false" | string == "FALSE")
+        else if (string == "false" || string == "FALSE")
             return enbt::value(false);
         else
             throw std::invalid_argument("invalid boolean value");
     }
 
     enbt::value parse_none(std::string_view string) {
-        if (string == "n" | string == "N")
+        if (string == "n" || string == "N")
             return enbt::value();
-        else if (string == "none" | string == "NONE")
+        else if (string == "none" || string == "NONE")
             return enbt::value();
-        else if (string == "null" | string == "NULL")
+        else if (string == "null" || string == "NULL")
             return enbt::value();
         else
             throw std::invalid_argument("invalid none value");
@@ -3177,7 +3181,7 @@ namespace senbt {
     }
 
     std::string de_format(const std::string& string) {
-        //replaces special symbols with \t \n \b \r \f \' \" and \\
+        /*replaces special symbols with \t \n \b \r \f \' \" and \\ */
 
         std::string res;
         res.reserve(size_t(string.size() * 1.2) + 1);

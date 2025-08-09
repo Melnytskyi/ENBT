@@ -113,20 +113,21 @@ namespace enbt {
             }
 
             class peek_stream {
-                std::istream& s;
+                std::istream& read_stream;
                 enbt::type_id current_type_id;
                 std::streampos pos;
                 int8_t bit_value;
 
             public:
-                peek_stream(std::istream& s, enbt::type_id current_type_id, int8_t bit_value) : s(s), current_type_id(current_type_id), bit_value(bit_value) {
-                    pos = s.tellg();
+                peek_stream(std::istream& read_stream, enbt::type_id current_type_id, int8_t bit_value) : read_stream(read_stream), current_type_id(current_type_id), bit_value(bit_value) {
+                    pos = read_stream.tellg();
                 }
 
                 template <class FN>
+                void peek(FN&& fn)
                     requires(std::is_invocable_v<FN, value_read_stream&>)
-                void peek(FN&& fn) {
-                    auto old_pos = s.tellg();
+                {
+                    auto old_pos = read_stream.tellg();
                     try {
                         if (old_pos != pos)
                             read_stream.seekg(pos);
@@ -189,12 +190,12 @@ namespace enbt {
                 }
 
                 template <class FN>
+                void peek_at(std::size_t index, FN&& fn)
                     requires(std::is_invocable_v<FN, value_read_stream&>)
-                void peek_at(std::size_t index, FN&& fn) {
+                {
                     if (items <= index)
                         throw std::out_of_range("Index points out of the array range");
                     auto old_pos = read_stream.tellg();
-                    enbt::value res;
                     try {
                         if (old_pos != arr_pos)
                             read_stream.seekg(arr_pos);
@@ -207,7 +208,6 @@ namespace enbt {
                         throw;
                     }
                     read_stream.seekg(old_pos);
-                    return res;
                 }
 
                 std::vector<enbt::value> read() {
@@ -228,7 +228,7 @@ namespace enbt {
 
                 template <class FN>
                 darray& read_one(FN&& fn)
-                    requires std::is_invocable_v<FN, value_read_stream&>
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
                 {
                     if (current_item == items)
                         throw std::out_of_range("Tried to read value out of arrays range.");
@@ -240,7 +240,7 @@ namespace enbt {
 
                 template <class FN>
                 darray& iterable(const FN& fn)
-                    requires std::is_invocable_v<FN, value_read_stream&>
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
                 {
                     while (current_item != items)
                         read_one(fn);
@@ -312,8 +312,9 @@ namespace enbt {
                 }
 
                 template <class FN>
+                array& peek_at(std::size_t index, FN&& fn)
                     requires(std::is_invocable_v<FN, value_read_stream&>)
-                array& peek_at(std::size_t index, FN&& fn) {
+                {
                     if (items <= index)
                         throw std::out_of_range("Index points out of the array range");
                     auto old_pos = read_stream.tellg();
@@ -365,8 +366,9 @@ namespace enbt {
                 }
 
                 template <class FN>
+                array& iterable(const FN& fn)
                     requires(std::is_invocable_v<FN, value_read_stream&>)
-                array& iterable(const FN& fn) {
+                {
                     while (current_item != items)
                         read_one(fn);
                     return *this;
@@ -422,7 +424,7 @@ namespace enbt {
                     auto old_pos = read_stream.tellg();
                     T val;
                     try {
-                        read_stream.seekg(arr_pos + index * sizeof(T));
+                        read_stream.seekg(arr_pos + std::streampos(index * sizeof(T)));
                         read_stream.read((char*)&val, sizeof(T));
                     } catch (...) {
                         read_stream.seekg(old_pos);
@@ -444,15 +446,17 @@ namespace enbt {
                 }
 
                 template <class FN>
+                darray& read_one(FN&& fn)
                     requires(std::is_invocable_v<FN, T>)
-                darray& read_one(FN&& fn) {
+                {
                     fn(read_one());
                     return *this;
                 }
 
                 template <class FN>
+                darray& iterable(const FN& fn)
                     requires(std::is_invocable_v<FN, T>)
-                darray& iterable(const FN& fn) {
+                {
                     while (current_item != items)
                         read_one(fn);
                     return *this;
@@ -495,8 +499,9 @@ namespace enbt {
                 }
 
                 template <class FN>
+                compound& read(FN&& fn)
                     requires(std::is_invocable_v<FN, std::string&, value_read_stream&>)
-                compound& read(FN&& fn) {
+                {
                     if (current_item == items)
                         throw std::out_of_range("Tried to read value out of compounds range.");
                     auto str = read_string(read_stream);
@@ -526,8 +531,9 @@ namespace enbt {
                 }
 
                 template <class FN>
+                void peek_at(std::string_view index, FN&& fn)
                     requires(std::is_invocable_v<FN, value_read_stream&>)
-                void peek_at(std::string_view index, FN&& fn) {
+                {
                     auto old_pos = read_stream.tellg();
                     try {
                         if (old_pos != comp_pos)
@@ -545,8 +551,9 @@ namespace enbt {
                 }
 
                 template <class FN>
+                compound& iterable(const FN& fn)
                     requires(std::is_invocable_v<FN, std::string&, value_read_stream&>)
-                compound& iterable(const FN& fn) {
+                {
                     while (current_item != items)
                         read(fn);
                     return *this;
@@ -630,26 +637,30 @@ namespace enbt {
             size_t peek_size();
 
             template <class FN>
+            void iterate(FN&& callback)
                 requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>)
-            void iterate(FN&& callback) {
+            {
                 iterate([](std::uint64_t) {}, std::move(callback));
             }
 
             template <class FN>
+            void iterate(FN&& callback)
                 requires(std::is_invocable_v<FN, value_read_stream&>)
-            void iterate(FN&& callback) {
+            {
                 iterate([](std::uint64_t) {}, std::move(callback));
             }
 
             template <class FN>
+            void peek_iterate(FN&& callback)
                 requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>)
-            void peek_iterate(FN&& callback) {
+            {
                 peek_iterate([](std::uint64_t) {}, std::move(callback));
             }
 
             template <class FN>
+            void peek_iterate(FN&& callback)
                 requires(std::is_invocable_v<FN, value_read_stream&>)
-            void peek_iterate(FN&& callback) {
+            {
                 peek_iterate([](std::uint64_t) {}, std::move(callback));
             }
 
@@ -710,7 +721,6 @@ namespace enbt {
                     enbt::endian_helpers::convert_endian_arr(current_type_id.get_endian(), res);
                     return res;
                 } else {
-                    size_t index = 0;
                     std::vector<T> res;
                     iterate(
                         [&](size_t len) {
@@ -740,8 +750,9 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
-                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
-            void iterate(SIZE_FN&& size_callback, FN&& callback) {
+            void iterate(SIZE_FN&& size_callback, FN&& callback)
+                requires((std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>)
+            {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::compound) {
@@ -758,8 +769,9 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
-                requires(std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
-            void peek_iterate(SIZE_FN&& size_callback, FN&& callback) {
+            void peek_iterate(SIZE_FN&& size_callback, FN&& callback)
+                requires((std::is_invocable_v<FN, std::string_view, value_read_stream&> || std::is_invocable_v<FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>)
+            {
                 auto old_pos = read_stream.tellg();
                 try {
                     iterate(size_callback, callback);
@@ -773,8 +785,9 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
+            void iterate(SIZE_FN&& size_callback, FN&& callback)
                 requires(std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
-            void iterate(SIZE_FN&& size_callback, FN&& callback) {
+            {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::array) {
@@ -807,8 +820,9 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class FN>
+            void peek_iterate(SIZE_FN&& size_callback, FN&& callback)
                 requires(std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<SIZE_FN, uint64_t>)
-            void peek_iterate(SIZE_FN&& size_callback, FN&& callback) {
+            {
                 auto old_pos = read_stream.tellg();
                 try {
                     iterate(size_callback, callback);
@@ -822,8 +836,9 @@ namespace enbt {
             }
 
             template <class FN>
+            void join_log_item(FN&& callback)
                 requires(std::is_invocable_v<FN, value_read_stream&>)
-            void join_log_item(FN&& callback) {
+            {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::log_item) {
@@ -836,8 +851,9 @@ namespace enbt {
             }
 
             template <class FN>
+            void peek_join_log_item(FN&& callback)
                 requires(std::is_invocable_v<FN, value_read_stream&>)
-            void peek_join_log_item(FN&& callback) {
+            {
                 auto old_pos = read_stream.tellg();
                 try {
                     join_log_item(callback);
@@ -851,19 +867,21 @@ namespace enbt {
             }
 
             template <class COMPOUND_FN, class ARRAY_FN>
-                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>))
             void blind_iterate(
                 COMPOUND_FN&& compound,
                 ARRAY_FN&& array_or_log_item
-            ) {
+            )
+                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>))
+            {
                 blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
             }
 
             template <class SIZE_FN, class COMPOUND_FN, class ARRAY_FN>
-                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>)
             void blind_iterate(
                 SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item
-            ) {
+            )
+                requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>)
+            {
                 if (readed)
                     throw enbt::exception("Invalid read state, item has been already readed");
                 if (current_type_id.type == enbt::type::compound) {
@@ -909,8 +927,9 @@ namespace enbt {
             }
 
             template <class COMPOUND_FN, class ARRAY_FN>
+            void peek_blind_iterate(COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item)
                 requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>))
-            void peek_blind_iterate(COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item) {
+            {
                 auto old_pos = read_stream.tellg();
                 try {
                     blind_iterate([](std::uint64_t) {}, std::move(compound), std::move(array_or_log_item));
@@ -924,8 +943,9 @@ namespace enbt {
             }
 
             template <class SIZE_FN, class COMPOUND_FN, class ARRAY_FN>
+            void peek_blind_iterate(SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item)
                 requires(std::is_invocable_v<ARRAY_FN, value_read_stream&> && (std::is_invocable_v<COMPOUND_FN, std::string_view, value_read_stream&> || std::is_invocable_v<COMPOUND_FN, const std::string&, value_read_stream&>) && std::is_invocable_v<SIZE_FN, uint64_t>)
-            void peek_blind_iterate(SIZE_FN&& size_callback, COMPOUND_FN&& compound, ARRAY_FN&& array_or_log_item) {
+            {
                 auto old_pos = read_stream.tellg();
                 try {
                     blind_iterate(size_callback, std::move(compound), std::move(array_or_log_item));
@@ -964,7 +984,7 @@ namespace enbt {
 
                 template <class FN>
                 darray& write(FN&& fn)
-                    requires std::is_invocable_v<FN, value_write_stream&>
+                    requires(std::is_invocable_v<FN, value_write_stream&>)
                 {
                     value_write_stream inner(write_stream);
                     fn(inner);
@@ -975,7 +995,7 @@ namespace enbt {
                 //fn(item, inner)
                 template <class Iterable, class FN>
                 darray& iterable(const Iterable& iter, const FN& fn)
-                    requires std::is_invocable_v<FN, value_write_stream&>
+                    requires(std::is_invocable_v<FN, value_write_stream&>)
                 {
                     for (const auto& item : iter)
                         write([&](value_write_stream& inner) {
@@ -1096,7 +1116,7 @@ namespace enbt {
 
                 template <class FN>
                 compound& write(std::string_view filed_name, FN&& fn)
-                    requires std::is_invocable_v<FN, value_write_stream&>
+                    requires(std::is_invocable_v<FN, value_write_stream&>)
                 {
                     write_string(write_stream, filed_name);
                     value_write_stream inner(write_stream);
