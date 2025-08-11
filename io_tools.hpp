@@ -209,9 +209,9 @@ namespace enbt {
 
             static void read(std::vector<T>& value, value_read_stream& read_stream) {
                 if constexpr (std::is_integral_v<T>) {
-                    value = read_stream.iterate_into();
+                    value = read_stream.template iterate_into<T>();
                 } else if constexpr (serialization_simple_cast_data<T>::value) {
-                    auto tmp = read_stream.iterate_into<serialization_simple_cast<T>::type>();
+                    auto tmp = read_stream.template iterate_into<typename serialization_simple_cast<T>::type>();
                     value.clear();
                     value.reserve(tmp.size());
                     for (auto it : tmp)
@@ -228,7 +228,7 @@ namespace enbt {
                 if constexpr (std::is_integral_v<T>)
                     write_stream.write_sarray<T>(value.size()).iterable(value);
                 else if constexpr (serialization_simple_cast_data<T>::value)
-                    write_stream.write_sarray<serialization_simple_cast_data<T>::type>(value.size()).iterable(value, [](const T& value) { return serialization_simple_cast<T>::write_cast(value); });
+                    write_stream.write_sarray<typename serialization_simple_cast_data<T>::type>(value.size()).iterable(value, [](const T& value) { return serialization_simple_cast<T>::write_cast(value); });
                 else
                     write_stream.write_array(value.size()).iterable(value, [](const T& value, value_write_stream& write_stream) { serialization<T>::write(value, write_stream); });
             }
@@ -250,7 +250,7 @@ namespace enbt {
             }
 
             static void write(const std::unordered_map<std::string, T>& value, value_write_stream& write_stream) {
-                write_stream.write_compound().iterable(value, [](const auto& name, const T& value, value_write_stream& write_stream) { serialization<T>::write(value, write_stream); });
+                write_stream.write_compound().iterable(value, [](const auto&, const T& value, value_write_stream& write_stream) { serialization<T>::write(value, write_stream); });
             }
         };
 
@@ -266,7 +266,7 @@ namespace enbt {
                 if constexpr (std::is_integral_v<T>) {
                     read_stream.iterate_into(value.data(), N);
                 } else if constexpr (serialization_simple_cast_data<T>::value) {
-                    std::vector<serialization_simple_cast_data<T>::type> tmp;
+                    std::vector<typename serialization_simple_cast_data<T>::type> tmp;
                     tmp.resize(N);
                     read_stream.iterate_into(tmp.data(), N);
                     for (size_t i = 0; i < N; i++)
@@ -290,7 +290,7 @@ namespace enbt {
                 if constexpr (std::is_integral_v<T>)
                     write_stream.write_sarray<T>(N).iterable(value);
                 else if constexpr (serialization_simple_cast_data<T>::value)
-                    write_stream.write_sarray<serialization_simple_cast_data<T>::type>(N).iterable(value, [](const T& value) { return serialization_simple_cast<T>::write_cast(value); });
+                    write_stream.write_sarray<typename serialization_simple_cast_data<T>::type>(N).iterable(value, [](const T& value) { return serialization_simple_cast<T>::write_cast(value); });
                 else
                     write_stream.write_array(N).iterable(value, [](const T& value, value_write_stream& write_stream) { serialization<T>::write(value, write_stream); });
             }
@@ -302,7 +302,7 @@ namespace enbt {
                 if constexpr (std::is_integral_v<T>) {
                     read_stream.iterate_into(value, N);
                 } else if constexpr (serialization_simple_cast_data<T>::value) {
-                    std::vector<serialization_simple_cast_data<T>::type> tmp;
+                    std::vector<typename serialization_simple_cast_data<T>::type> tmp;
                     tmp.resize(N);
                     read_stream.iterate_into(tmp.data(), N);
                     for (size_t i = 0; i < N; i++)
@@ -326,7 +326,7 @@ namespace enbt {
                 if constexpr (std::is_integral_v<T>)
                     write_stream.write_sarray_dir(value);
                 else if constexpr (serialization_simple_cast_data<T>::value)
-                    write_stream.write_sarray<serialization_simple_cast_data<T>::type>(N).iterable(value, [](const T& value) { return serialization_simple_cast<T>::write_cast(value); });
+                    write_stream.write_sarray<typename serialization_simple_cast_data<T>::type>(N).iterable(value, [](const T& value) { return serialization_simple_cast<T>::write_cast(value); });
                 else
                     write_stream.write_array(N).iterable(value, [](const T& value, value_write_stream& write_stream) { serialization<T>::write(value, write_stream); });
             }
