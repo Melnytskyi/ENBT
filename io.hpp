@@ -73,7 +73,7 @@ namespace enbt {
             value_path(const std::vector<index>& copy);
             value_path(std::vector<index>&& move);
             value_path(const value_path& copy);
-            value_path(value_path&& move);
+            value_path(value_path&& move) noexcept;
 
             value_path&& operator[](std::string_view index);
             value_path&& operator[](std::uint64_t index);
@@ -214,7 +214,7 @@ namespace enbt {
                     std::vector<enbt::value> res;
                     res.reserve(items - current_item);
                     iterable([&res](value_read_stream& stream) {
-                        res.push_back(stream.read());
+                        res.emplace_back(stream.read());
                     });
                     return res;
                 }
@@ -282,7 +282,7 @@ namespace enbt {
                     std::vector<enbt::value> res;
                     res.reserve(items - current_item);
                     iterable([&res](value_read_stream& stream) {
-                        res.push_back(stream.read());
+                        res.emplace_back(stream.read());
                     });
                     return res;
                 }
@@ -727,7 +727,7 @@ namespace enbt {
                             res.reserve(len);
                         },
                         [&](value_read_stream& self) {
-                            res.push_back(self.read());
+                            res.emplace_back(self.read());
                         }
                     );
                     return res;
@@ -1156,7 +1156,7 @@ namespace enbt {
                 if (need_to_write_type_id)
                     write_type_id(write_stream, tid);
                 write_compress_len(write_stream, N);
-                write_stream.write((char*)array, N * sizeof(T));
+                write_stream.write((const char*)array, N * sizeof(T));
                 written_type_id = simple_array<T>::enbt_type;
             }
 

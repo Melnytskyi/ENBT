@@ -706,6 +706,9 @@ namespace enbt {
         }
 
         value& operator=(const value& copy) {
+            if (this == &copy)
+                return *this;
+            free_data(data, data_type_id);
             data = copy.clone_data();
             data_len = copy.data_len;
             data_type_id = copy.data_type_id;
@@ -713,6 +716,8 @@ namespace enbt {
         }
 
         value& operator=(value&& move) noexcept {
+            if (this == &move)
+                return *this;
             data = move.data;
             data_len = move.data_len;
             data_type_id = move.data_type_id;
@@ -1006,13 +1011,15 @@ namespace enbt {
         }
 
         void remove(std::size_t index) {
-            if (is_array())
+            if (is_array()) {
+                if (((std::vector<value>*)data)->size() <= index)
+                    throw std::out_of_range("Index is out of range.");
                 ((std::vector<value>*)data)->erase(((std::vector<value>*)data)->begin() + index);
-            else
+            } else
                 throw enbt::exception("Cannot remove item from non array type");
         }
 
-        void remove(std::string name);
+        void remove(const std::string& name);
 
         std::size_t push(const value& enbt) {
             if (is_array()) {
@@ -1370,7 +1377,7 @@ namespace enbt {
                     return false;
                 case enbt::type::array:
                 case enbt::type::darray:
-                    return (*(std::vector<value>::iterator*)pointer) == (*(std::vector<value>::iterator*)pointer);
+                    return (*(std::vector<value>::iterator*)pointer) == (*(std::vector<value>::iterator*)interator.pointer);
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) == (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
                 default:
@@ -1384,7 +1391,7 @@ namespace enbt {
                     return true;
                 case enbt::type::array:
                 case enbt::type::darray:
-                    return (*(std::vector<value>::iterator*)pointer) != (*(std::vector<value>::iterator*)pointer);
+                    return (*(std::vector<value>::iterator*)pointer) != (*(std::vector<value>::iterator*)interator.pointer);
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) != (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
                 default:
@@ -1641,7 +1648,7 @@ namespace enbt {
                     return pointer == interator.pointer;
                 case enbt::type::array:
                 case enbt::type::darray:
-                    return (*(std::vector<value>::iterator*)pointer) == (*(std::vector<value>::iterator*)pointer);
+                    return (*(std::vector<value>::iterator*)pointer) == (*(std::vector<value>::iterator*)interator.pointer);
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) == (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
                     break;
@@ -1659,7 +1666,7 @@ namespace enbt {
                     return pointer == interator.pointer;
                 case enbt::type::array:
                 case enbt::type::darray:
-                    return (*(std::vector<value>::iterator*)pointer) != (*(std::vector<value>::iterator*)pointer);
+                    return (*(std::vector<value>::iterator*)pointer) != (*(std::vector<value>::iterator*)interator.pointer);
                 case enbt::type::compound:
                     return (*(std::unordered_map<std::string, value>::iterator*)pointer) != (*(std::unordered_map<std::string, value>::iterator*)interator.pointer);
                     break;
@@ -1806,7 +1813,7 @@ namespace enbt {
             proxy = tag.proxy;
         }
 
-        compound_const_ref(compound_const_ref&& tag) {
+        compound_const_ref(compound_const_ref&& tag) noexcept {
             proxy = tag.proxy;
         }
 
@@ -1932,7 +1939,7 @@ namespace enbt {
             proxy = tag.proxy;
         }
 
-        compound_ref(compound_ref&& tag) {
+        compound_ref(compound_ref&& tag) noexcept {
             proxy = tag.proxy;
         }
 
@@ -2053,7 +2060,7 @@ namespace enbt {
             return *this;
         }
 
-        compound_ref& operator=(compound_ref&& tag) {
+        compound_ref& operator=(compound_ref&& tag) noexcept {
             proxy = tag.proxy;
             return *this;
         }
@@ -2374,7 +2381,7 @@ namespace enbt {
             proxy = tag.proxy;
         }
 
-        dynamic_array_ref(dynamic_array_ref&& tag) {
+        dynamic_array_ref(dynamic_array_ref&& tag) noexcept {
             proxy = tag.proxy;
         }
 
@@ -2383,7 +2390,7 @@ namespace enbt {
             return *this;
         }
 
-        dynamic_array_ref& operator=(dynamic_array_ref&& tag) {
+        dynamic_array_ref& operator=(dynamic_array_ref&& tag) noexcept {
             proxy = tag.proxy;
             return *this;
         }
@@ -2722,7 +2729,7 @@ namespace enbt {
 
         simple_array_ref() {
             proxy = nullptr;
-            size_++;
+            size_ = 0;
         }
 
     public:
@@ -2980,7 +2987,7 @@ namespace enbt {
             proxy = std::get<std::vector<value>*>(holder.content());
         }
 
-        fixed_array(fixed_array&& move) {
+        fixed_array(fixed_array&& move) noexcept {
             holder = std::move(move.holder);
             proxy = std::get<std::vector<value>*>(holder.content());
         }
@@ -3013,7 +3020,7 @@ namespace enbt {
             return *this;
         }
 
-        fixed_array& operator=(fixed_array&& move) {
+        fixed_array& operator=(fixed_array&& move) noexcept {
             holder = std::move(move.holder);
             proxy = std::get<std::vector<value>*>(holder.content());
             return *this;
@@ -3081,7 +3088,7 @@ namespace enbt {
             proxy = std::get<std::vector<value>*>(holder.content());
         }
 
-        dynamic_array(dynamic_array&& move) {
+        dynamic_array(dynamic_array&& move) noexcept {
             holder = std::move(move.holder);
             proxy = std::get<std::vector<value>*>(holder.content());
         }
@@ -3113,7 +3120,7 @@ namespace enbt {
             return *this;
         }
 
-        dynamic_array& operator=(dynamic_array&& move) {
+        dynamic_array& operator=(dynamic_array&& move) noexcept {
             holder = std::move(move.holder);
             proxy = std::get<std::vector<value>*>(holder.content());
             return *this;
@@ -3177,7 +3184,7 @@ namespace enbt {
             simple_array_ref<T>::size_ = holder.size();
         }
 
-        simple_array(simple_array&& move)
+        simple_array(simple_array&& move) noexcept
             : holder(std::move(move.holder)) {
             simple_array_ref<T>::proxy = std::get<T*>(holder.content());
             simple_array_ref<T>::size_ = holder.size();
@@ -3203,7 +3210,7 @@ namespace enbt {
             return *this;
         }
 
-        simple_array& operator=(simple_array&& move) {
+        simple_array& operator=(simple_array&& move) noexcept {
             holder = std::move(move.holder);
             simple_array_ref<T>::proxy = std::get<T*>(holder.content());
             simple_array_ref<T>::size_ = holder.size();
@@ -3287,7 +3294,7 @@ namespace enbt {
             holder = tag.holder;
         }
 
-        bit(bit&& tag) {
+        bit(bit&& tag) noexcept {
             holder = std::move(tag.holder);
         }
 
@@ -3310,7 +3317,7 @@ namespace enbt {
             return *this;
         }
 
-        bit& operator=(bit&& tag) {
+        bit& operator=(bit&& tag) noexcept {
             holder = std::move(tag.holder);
             return *this;
         }
@@ -3351,7 +3358,7 @@ namespace enbt {
             if (abstract.get_type() == enbt::type::optional)
                 holder = abstract;
             else
-                holder = value(true, std::move(abstract));
+                holder = value(true, abstract);
         }
 
         optional(value&& abstract) {
@@ -3365,7 +3372,7 @@ namespace enbt {
             holder = tag.holder;
         }
 
-        optional(optional&& tag) {
+        optional(optional&& tag) noexcept {
             holder = std::move(tag.holder);
         }
 
@@ -3374,14 +3381,14 @@ namespace enbt {
             return *this;
         }
 
-        optional& operator=(optional&& tag) {
+        optional& operator=(optional&& tag) noexcept {
             holder = std::move(tag.holder);
             return *this;
         }
 
         optional& operator=(const value& copy) {
             if (copy.is_optional())
-                holder = value(true, std::move(copy));
+                holder = value(true, copy);
             else
                 holder = copy;
             return *this;
@@ -3484,7 +3491,7 @@ namespace enbt {
             holder = tag.holder;
         }
 
-        uuid(uuid&& tag) {
+        uuid(uuid&& tag) noexcept {
             holder = std::move(tag.holder);
         }
 
@@ -3493,7 +3500,7 @@ namespace enbt {
             return *this;
         }
 
-        uuid& operator=(uuid&& tag) {
+        uuid& operator=(uuid&& tag) noexcept {
             holder = std::move(tag.holder);
             return *this;
         }

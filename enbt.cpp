@@ -67,26 +67,31 @@ namespace enbt {
 
     value::value(std::string_view str) {
         data_type_id.type = type::string;
+        data_len = 0;
         data = (std::uint8_t*)new std::string(str);
     }
 
     value::value(const std::string& str) {
         data_type_id.type = type::string;
+        data_len = 0;
         data = (std::uint8_t*)new std::string(str);
     }
 
     value::value(std::string&& str) {
         data_type_id.type = type::string;
+        data_len = 0;
         data = (std::uint8_t*)new std::string(std::move(str));
     }
 
     value::value(const char* str) {
         data_type_id.type = type::string;
+        data_len = 0;
         data = (std::uint8_t*)new std::string(str);
     }
 
     value::value(const char* str, size_t len) {
         data_type_id.type = type::string;
+        data_len = 0;
         data = (std::uint8_t*)new std::string(str, len);
     }
 
@@ -108,12 +113,14 @@ namespace enbt {
             throw exception("Invalid tid");
         data_type_id = tid;
         data_type_id.length = calc_type_len(array.size());
+        data_len = 0;
         data = (std::uint8_t*)new std::vector<value>(array);
     }
 
     value::value(const std::unordered_map<std::string, value>& compound) {
         data_type_id = enbt::type_id{type::compound, calc_type_len(compound.size()), false};
         data = (std::uint8_t*)new std::unordered_map<std::string, value>(compound);
+        data_len = 0;
     }
 
     value::value(std::vector<value>&& array) {
@@ -146,12 +153,14 @@ namespace enbt {
             throw exception("Invalid tid");
         data_type_id = tid;
         data_type_id.length = calc_type_len(array.size());
+        data_len = 0;
         data = (std::uint8_t*)new std::vector<value>(std::move(array));
     }
 
     value::value(std::unordered_map<std::string, value>&& compound) {
         data_type_id = enbt::type_id{type::compound, calc_type_len(compound.size()), false};
         data = (std::uint8_t*)new std::unordered_map<std::string, value>(std::move(compound));
+        data_len = 0;
     }
 
     value::value(const std::uint8_t* arr, std::size_t len) {
@@ -842,7 +851,7 @@ namespace enbt {
         throw std::invalid_argument("Invalid tid, cannot index compound");
     }
 
-    void value::remove(std::string name) {
+    void value::remove(const std::string& name) {
         ((std::unordered_map<std::string, value>*)data)->erase(name);
     }
 
@@ -1627,9 +1636,13 @@ namespace enbt {
         void write_array(std::ostream& write_stream, t* values, std::size_t len, std::endian endian = std::endian::native) {
             if constexpr (sizeof(t) == 1) {
                 write_stream.write((const char*)values, len);
+            } else if constexpr(std::is_const_v<t>){
+                std::vector<std::decay_t<t>> tmp(values, values + len);
+                endian_helpers::convert_endian(endian, tmp.data(), tmp.size());
+                write_stream.write((const char*)tmp.data(), tmp.size() * sizeof(t));
             } else {
                 endian_helpers::convert_endian(endian, values, len);
-                write_stream.write((char*)values, len * sizeof(t));
+                write_stream.write((const char*)values, len * sizeof(t));
                 endian_helpers::convert_endian(endian, values, len);
             }
         }
@@ -1694,7 +1707,7 @@ namespace enbt {
         void write_array(std::ostream& write_stream, const value& val) {
             if (!val.is_array())
                 throw enbt::exception("this is not array for serialize it");
-            auto result = (std::vector<value>*)val.get_internal_ptr();
+            auto result = (const std::vector<value>*)val.get_internal_ptr();
             std::size_t len = result->size();
             write_define_len(write_stream, len, val.type_id());
             if (len) {
@@ -1726,7 +1739,7 @@ namespace enbt {
         void write_darray(std::ostream& write_stream, const value& val) {
             if (!val.is_array())
                 throw enbt::exception("this is not array for serialize it");
-            auto result = (std::vector<value>*)val.get_internal_ptr();
+            auto result = (const std::vector<value>*)val.get_internal_ptr();
             write_define_len(write_stream, result->size(), val.type_id());
             for (auto& it : *result)
                 write_token(write_stream, it);
@@ -1740,21 +1753,21 @@ namespace enbt {
                 break;
             case enbt::type_len::Short:
                 if (val.type_id().is_signed)
-                    write_array(write_stream, (std::uint16_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
+                    write_array(write_stream, (const std::uint16_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
                 else
-                    write_array(write_stream, (std::uint16_t*)val.get_internal_ptr(), val.size());
+                    write_array(write_stream, (const std::uint16_t*)val.get_internal_ptr(), val.size());
                 break;
             case enbt::type_len::Default:
                 if (val.type_id().is_signed)
-                    write_array(write_stream, (std::uint32_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
+                    write_array(write_stream, (const std::uint32_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
                 else
-                    write_array(write_stream, (std::uint32_t*)val.get_internal_ptr(), val.size());
+                    write_array(write_stream, (const std::uint32_t*)val.get_internal_ptr(), val.size());
                 break;
             case enbt::type_len::Long:
                 if (val.type_id().is_signed)
-                    write_array(write_stream, (std::uint64_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
+                    write_array(write_stream, (const std::uint64_t*)val.get_internal_ptr(), val.size(), val.type_id().get_endian());
                 else
-                    write_array(write_stream, (std::uint64_t*)val.get_internal_ptr(), val.size());
+                    write_array(write_stream, (const std::uint64_t*)val.get_internal_ptr(), val.size());
                 break;
             default:
                 break;
@@ -1766,7 +1779,7 @@ namespace enbt {
             ss << std::ios::binary;
             write_token(ss, val);
             write_compress_len(write_stream, ss.view().size());
-            write_array(write_stream, (uint8_t*)ss.view().data(), ss.view().size());
+            write_array(write_stream, (const uint8_t*)ss.view().data(), ss.view().size());
         }
 
         void write_value(std::ostream& write_stream, const value& val) {
@@ -2151,8 +2164,8 @@ namespace enbt {
         std::vector<value> read_list_file(std::istream& read_stream) {
             check_version(read_stream);
             std::vector<value> result;
-            while (!read_stream.eof())
-                result.push_back(read_token(read_stream));
+            while (!read_stream.eof() && !read_stream.fail())
+                result.emplace_back(read_token(read_stream));
             return result;
         }
 
@@ -2409,13 +2422,11 @@ namespace enbt {
                 return std::get<std::uint64_t>(value);
         }
 
-        std::vector<std::string> split_s(std::string str, std::string delimiter) {
+        std::vector<std::string> split_s(std::string str, std::string_view delimiter) {
             std::vector<std::string> res;
             std::size_t pos = 0;
-            std::string token;
             while ((pos = str.find(delimiter)) != std::string::npos) {
-                token = str.substr(0, pos);
-                res.push_back(token);
+                res.emplace_back(str.substr(0, pos));
                 str.erase(0, pos + delimiter.length());
             }
             res.push_back(str);
@@ -2424,7 +2435,7 @@ namespace enbt {
 
         value_path::value_path(std::string_view stringized_path) {
             for (auto&& tmp : split_s(std::string(stringized_path), "."))
-                path.push_back({tmp});
+                path.emplace_back(tmp);
         }
 
         value_path::value_path(const std::vector<index>& copy)
@@ -2436,16 +2447,16 @@ namespace enbt {
         value_path::value_path(const value_path& copy)
             : path(copy.path) {}
 
-        value_path::value_path(value_path&& move)
+        value_path::value_path(value_path&& move) noexcept
             : path(std::move(move.path)) {}
 
         value_path&& value_path::operator[](std::string_view index) {
-            path.push_back({(std::string)index});
+            path.emplace_back((std::string)index);
             return std::move(*this);
         }
 
         value_path&& value_path::operator[](std::uint64_t index) {
-            path.push_back({index});
+            path.emplace_back(index);
             return std::move(*this);
         }
 
@@ -2757,7 +2768,6 @@ namespace senbt {
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('d') || string.ends_with('D')) {
             is_floating = true;
-            len = enbt::type_len::Long;
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('v')) {
             is_var = true;
@@ -2765,7 +2775,6 @@ namespace senbt {
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('V')) {
             is_var = true;
-            len = enbt::type_len::Long;
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('c')) {
             is_comp = true;
@@ -2773,13 +2782,11 @@ namespace senbt {
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('C')) {
             is_comp = true;
-            len = enbt::type_len::Long;
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('i')) {
             len = enbt::type_len::Default;
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('I') || string.ends_with('l') || string.ends_with('L')) {
-            len = enbt::type_len::Long;
             string = string.substr(0, string.size() - 1);
         } else if (string.ends_with('s') || string.ends_with('S')) {
             len = enbt::type_len::Short;
@@ -2792,7 +2799,7 @@ namespace senbt {
         auto pos = string.find('.');
         if (pos != std::string_view::npos) {
             is_floating = true;
-            if (is_var | is_comp)
+            if (is_var || is_comp)
                 throw std::invalid_argument("floating point numbers cannot be var or comp integers");
         }
 
@@ -2901,7 +2908,7 @@ namespace senbt {
                 string = string.substr(1);
                 break;
             }
-            result.push_back(parse_(string));
+            result.emplace_back(parse_(string));
             skip_empty(string);
             if (string.empty())
                 throw std::invalid_argument("expected ',' or ']'");
@@ -2974,7 +2981,7 @@ namespace senbt {
                 string = string.substr(1);
                 break;
             }
-            result.push_back(parse_numeric(string));
+            result.emplace_back(parse_numeric(string));
             skip_empty(string);
             if (string.empty())
                 throw std::invalid_argument("expected ',' or ']'");
@@ -3530,7 +3537,7 @@ namespace senbt {
             res += value ? "true" : "false";
             break;
         case enbt::type::string:
-            res += '"' + de_format((const std::string&)value) + '"';
+            res += '"' + de_format((std::string)value) + '"';
             break;
         case enbt::type::log_item:
             if (!compress) {
