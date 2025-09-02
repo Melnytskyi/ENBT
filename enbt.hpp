@@ -698,6 +698,22 @@ namespace enbt {
         value(const optional& copy);
         value(optional&& copy) noexcept;
 
+        template <class T>
+        value(const std::optional<T>& copy) {
+            if (copy.has_value())
+                operator=(value(true, value(*copy)));
+            else
+                operator=(value(false, value{}));
+        }
+
+        template <class T>
+        value(std::optional<T>&& move) noexcept {
+            if (move.has_value())
+                operator=(value(true, value(std::move(*move))));
+            else
+                operator=(value(false, value{}));
+        }
+
         value(const uuid& copy);
         value(uuid&& copy) noexcept;
 

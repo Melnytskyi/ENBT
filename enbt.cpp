@@ -1548,45 +1548,37 @@ namespace enbt {
         }
 
         void write_compress_len(std::ostream& write_stream, std::uint64_t len) {
-            union {
-                std::uint64_t full = 0;
-                std::uint8_t part[8];
-
-            } b;
-
-            b.full = endian_helpers::convert_endian(std::endian::big, len);
-
             constexpr struct {
-                std::uint64_t b64 : 62 = 4611686018427387903;
-                std::uint64_t b32 : 30 = 1073741823;
-                std::uint64_t b16 : 14 = 16383;
-                std::uint64_t b8 : 6 = 63;
+                std::uint64_t b62 : 62 = 0x3FFF'FFFF'FFFF'FFFF;
+                std::uint64_t b30 : 30 = 0x3FFF'FFFF;
+                std::uint64_t b14 : 14 = 0x3FFF;
+                std::uint64_t b6 : 6 = 0x3F;
             } m;
 
-            if (len <= m.b8) {
-                write_stream << b.part[7];
-            } else if (len <= m.b16) {
-                b.part[0] |= 1;
-                write_stream << b.part[7];
-                write_stream << b.part[6];
-            } else if (len <= m.b32) {
-                b.part[0] |= 2;
-                write_stream << b.part[7];
-                write_stream << b.part[6];
-                write_stream << b.part[5];
-                write_stream << b.part[4];
-            } else if (len <= m.b64) {
-                b.part[0] |= 3;
-                write_stream << b.part[7];
-                write_stream << b.part[6];
-                write_stream << b.part[5];
-                write_stream << b.part[4];
-                write_stream << b.part[3];
-                write_stream << b.part[2];
-                write_stream << b.part[1];
-                write_stream << b.part[0];
-            } else
-                throw std::overflow_error("uint64_t cannot put in to uint60_t");
+            if (len <= m.b6) {
+                write_stream << static_cast<std::uint8_t>(len & m.b6);
+            } else if (len <= m.b14) {
+                std::uint16_t val = static_cast<std::uint16_t>(len);
+                write_stream << std::uint8_t((val & m.b6) | (1 << 6));
+                write_stream << std::uint8_t((val >> 6) & 0xFF);
+            } else if (len <= m.b30) {
+                std::uint32_t val = static_cast<std::uint32_t>(len);
+                write_stream << std::uint8_t((val & m.b6) | (2 << 6));
+                write_stream << std::uint8_t((val >> 6) & 0xFF);
+                write_stream << std::uint8_t((val >> 14) & 0xFF);
+                write_stream << std::uint8_t((val >> 22) & 0xFF);
+            } else if (len <= m.b62) {
+                write_stream << std::uint8_t((len & m.b6) | (3 << 6));
+                write_stream << std::uint8_t((len >> 6) & 0xFF);
+                write_stream << std::uint8_t((len >> 14) & 0xFF);
+                write_stream << std::uint8_t((len >> 22) & 0xFF);
+                write_stream << std::uint8_t((len >> 30) & 0xFF);
+                write_stream << std::uint8_t((len >> 38) & 0xFF);
+                write_stream << std::uint8_t((len >> 46) & 0xFF);
+                write_stream << std::uint8_t((len >> 54) & 0xFF);
+            } else {
+                throw std::overflow_error("uint64_t cannot be converted to uint62_t without losing data");
+            }
         }
 
         template <class t>
@@ -1938,40 +1930,29 @@ namespace enbt {
                 return b.partial.len;
             case 1: {
                 std::uint16_t full = b.partial.len;
-                full <<= 8;
-                full |= __impl__::_read_as_<std::uint8_t>(read_stream);
+                full |= std::uint16_t(__impl__::_read_as_<std::uint8_t>(read_stream)) << 6;
                 return endian_helpers::convert_endian(std::endian::little, full);
             }
             case 2: {
                 std::uint32_t full = b.partial.len;
                 std::uint8_t buf[3];
                 read_stream.read((char*)buf, 3);
-                full <<= 24;
-                full |= buf[2];
-                full <<= 16;
-                full |= buf[1];
-                full <<= 8;
-                full |= buf[0];
+                full |= std::uint32_t(buf[2]) << 6;
+                full |= std::uint32_t(buf[1]) << 14;
+                full |= std::uint32_t(buf[0]) << 22;
                 return endian_helpers::convert_endian(std::endian::little, full);
             }
             case 3: {
                 std::uint64_t full = b.partial.len;
                 std::uint8_t buf[7];
                 read_stream.read((char*)buf, 7);
-                full <<= 56;
-                full |= buf[6];
-                full <<= 48;
-                full |= buf[5];
-                full <<= 40;
-                full |= buf[4];
-                full <<= 24;
-                full |= buf[3];
-                full <<= 24;
-                full |= buf[2];
-                full <<= 16;
-                full |= buf[1];
-                full <<= 8;
-                full |= buf[0];
+                full |= std::uint64_t(buf[6]) << 6;
+                full |= std::uint64_t(buf[5]) << 14;
+                full |= std::uint64_t(buf[4]) << 22;
+                full |= std::uint64_t(buf[3]) << 30;
+                full |= std::uint64_t(buf[2]) << 38;
+                full |= std::uint64_t(buf[1]) << 46;
+                full |= std::uint64_t(buf[0]) << 54;
                 return endian_helpers::convert_endian(std::endian::little, full);
             }
             default:
