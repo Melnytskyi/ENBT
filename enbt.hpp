@@ -11,7 +11,7 @@
     #include <unordered_map>
     #include <variant>
     #define ENBT_VERSION_HEX 0x11
-    #define ENBT_VERSION_STR 1.1
+    #define ENBT_VERSION_STR "1.1"
 
 //enchanted named binary tag
 
@@ -184,6 +184,13 @@ namespace enbt {
         constexpr type_id(enbt::type ty, enbt::type_len lt, bool sign) {
             type = ty;
             length = lt;
+            endian = enbt::endian::native;
+            is_signed = sign;
+        }
+
+        constexpr type_id(enbt::type ty, bool sign) {
+            type = ty;
+            length = enbt::type_len::Tiny;
             endian = enbt::endian::native;
             is_signed = sign;
         }
@@ -581,8 +588,8 @@ namespace enbt {
 
         template <class T = value>
         value(const std::vector<value>& array) {
-            bool as_array = true;
-            enbt::type_id tid_check = array[0].type_id();
+            bool as_array = array.size();
+            enbt::type_id tid_check = as_array ? array[0].type_id() : enbt::type_id{};
             for (auto& check : array)
                 if (!check.type_equal(tid_check)) {
                     as_array = false;
@@ -1040,12 +1047,12 @@ namespace enbt {
         std::size_t push(const value& enbt) {
             if (is_array()) {
                 if (data_type_id.type == enbt::type::array) {
-                    if (data_len)
+                    if (((std::vector<value>*)data)->size())
                         if (operator[](0).data_type_id != enbt.data_type_id)
                             throw enbt::exception("Invalid type for pushing array");
                 }
                 ((std::vector<value>*)data)->push_back(enbt);
-                return data_len++;
+                return ((std::vector<value>*)data)->size();
             } else
                 throw enbt::exception("Cannot push to non array type");
         }
@@ -1053,19 +1060,19 @@ namespace enbt {
         std::size_t push(value&& enbt) {
             if (is_array()) {
                 if (data_type_id.type == enbt::type::array) {
-                    if (data_len)
+                    if (((std::vector<value>*)data)->size())
                         if (operator[](0).data_type_id != enbt.data_type_id)
                             throw enbt::exception("Invalid type for pushing array");
                 }
                 ((std::vector<value>*)data)->push_back(std::move(enbt));
-                return data_len++;
+                return ((std::vector<value>*)data)->size();
             } else
                 throw enbt::exception("Cannot push to non array type");
         }
 
         value& front() {
             if (is_array()) {
-                if (!data_len)
+                if (!((std::vector<value>*)data)->size())
                     throw enbt::exception("Array empty");
                 return ((std::vector<value>*)data)->front();
             } else
@@ -1074,16 +1081,35 @@ namespace enbt {
 
         const value& front() const {
             if (is_array()) {
-                if (!data_len)
+                if (!((std::vector<value>*)data)->size())
                     throw enbt::exception("Array empty");
                 return ((std::vector<value>*)data)->front();
             } else
                 throw enbt::exception("Cannot get front item from non array type");
         }
 
+        value& back() {
+            if (is_array()) {
+                if (!((std::vector<value>*)data)->size())
+                    throw enbt::exception("Array empty");
+                return ((std::vector<value>*)data)->back();
+            } else
+                throw enbt::exception("Cannot get back item from non array type");
+        }
+
+        const value& back() const {
+            if (is_array()) {
+                if (!((std::vector<value>*)data)->size())
+                    throw enbt::exception("Array empty");
+                return ((std::vector<value>*)data)->back();
+            } else
+                throw enbt::exception("Cannot get back item from non array type");
+        }
+
+
         void pop() {
             if (is_array()) {
-                if (!data_len)
+                if (!((std::vector<value>*)data)->size())
                     throw enbt::exception("Array empty");
                 ((std::vector<value>*)data)->pop_back();
             } else

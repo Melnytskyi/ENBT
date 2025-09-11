@@ -1,6 +1,7 @@
 #include "enbt.hpp"
 #include "io.hpp"
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <random>
 #include <sstream>
@@ -1628,7 +1629,7 @@ namespace enbt {
         void write_array(std::ostream& write_stream, t* values, std::size_t len, std::endian endian = std::endian::native) {
             if constexpr (sizeof(t) == 1) {
                 write_stream.write((const char*)values, len);
-            } else if constexpr(std::is_const_v<t>){
+            } else if constexpr (std::is_const_v<t>) {
                 std::vector<std::decay_t<t>> tmp(values, values + len);
                 endian_helpers::convert_endian(endian, tmp.data(), tmp.size());
                 write_stream.write((const char*)tmp.data(), tmp.size() * sizeof(t));
@@ -2367,7 +2368,7 @@ namespace enbt {
                 skip_token(read_stream);
         }
 
-        void index_array(std::istream& read_stream, std::uint64_t index, enbt::type_id arr_tid) {
+        std::optional<enbt::type_id> index_array(std::istream& read_stream, std::uint64_t index, enbt::type_id arr_tid) {
             switch (arr_tid.type) {
             case enbt::type::array: {
                 std::uint64_t len = read_define_len64(read_stream, arr_tid);
@@ -2375,18 +2376,18 @@ namespace enbt {
                     throw enbt::exception("this array is empty");
                 auto target_id = read_type_id(read_stream);
                 index_static_array(read_stream, index, len, target_id);
-                break;
+                return target_id;
             }
             case enbt::type::darray:
                 index_dyn_array(read_stream, index, read_define_len64(read_stream, arr_tid));
-                break;
+                return {};
             default:
                 throw enbt::exception("invalid type id");
             }
         }
 
-        void index_array(std::istream& read_stream, std::uint64_t index) {
-            index_array(read_stream, index, read_type_id(read_stream));
+        std::optional<enbt::type_id> index_array(std::istream& read_stream, std::uint64_t index) {
+            return index_array(read_stream, index, read_type_id(read_stream));
         }
 
         value_path::index::operator std::string() const {
@@ -2441,28 +2442,37 @@ namespace enbt {
             return std::move(*this);
         }
 
-        bool move_to_value_path(std::istream& read_stream, const value_path& value_path) {
+        std::optional<enbt::type_id> move_to_value_path(std::istream& read_stream, const value_path& value_path) {
+            return move_to_value_path(read_stream, value_path, read_type_id(read_stream));
+        }
+
+        std::optional<enbt::type_id> move_to_value_path(std::istream& read_stream, const value_path& value_path, enbt::type_id current_id) {
             try {
                 for (auto&& tmp : value_path.path) {
-                    auto tid = read_type_id(read_stream);
-                    switch (tid.type) {
+                    switch (current_id.type) {
                     case enbt::type::array:
-                    case enbt::type::darray:
-                        index_array(read_stream, tmp, tid);
+                    case enbt::type::darray: {
+                        auto opt = index_array(read_stream, tmp, current_id);
+                        if (opt)
+                            current_id = *opt;
+                        else
+                            current_id = read_type_id(read_stream);
                         continue;
+                    }
                     case enbt::type::compound:
-                        if (!find_value_compound(read_stream, tid, (std::string)tmp))
-                            return false;
+                        if (!find_value_compound(read_stream, current_id, (std::string)tmp))
+                            return {};
+                        current_id = read_type_id(read_stream);
                         continue;
                     default:
-                        return false;
+                        return {};
                     }
                 }
-                return true;
+                return current_id;
             } catch (const std::out_of_range&) {
                 throw;
             } catch (const std::exception&) {
-                return false;
+                return {};
             }
         }
 
@@ -2512,30 +2522,1130 @@ namespace enbt {
         }
 
         value_read_stream::~value_read_stream() {
+            if (std::uncaught_exceptions())
+                return;
             if (!readed)
                 skip();
         }
 
+        value_read_stream::darray::darray(std::istream& read_stream, enbt::type_id current_type_id) : read_stream(read_stream), current_type_id(current_type_id) {
+            arr_pos = read_stream.tellg();
+            items = read_define_len(read_stream, current_type_id);
+        }
+
+        value_read_stream::darray::~darray() {
+            if (std::uncaught_exceptions())
+                return;
+            iterable([](auto& it) {
+                it.skip();
+            });
+        }
+
+        size_t value_read_stream::darray::size() const noexcept {
+            return items;
+        }
+
+        size_t value_read_stream::darray::current_index() const noexcept {
+            return current_item;
+        }
+
+        enbt::value value_read_stream::darray::peek_at(std::size_t index) {
+            if (items <= index)
+                throw std::out_of_range("Index points out of the array range");
+            auto old_pos = read_stream.tellg();
+            enbt::value res;
+            try {
+                if (old_pos != arr_pos)
+                    read_stream.seekg(arr_pos);
+
+                index_array(read_stream, index, current_type_id);
+                value_read_stream stream(read_stream);
+                res = stream.read();
+            } catch (...) {
+                read_stream.seekg(old_pos);
+                throw;
+            }
+            read_stream.seekg(old_pos);
+            return res;
+        }
+
+        std::vector<enbt::value> value_read_stream::darray::read() {
+            std::vector<enbt::value> res;
+            res.reserve(items - current_item);
+            iterable([&res](value_read_stream& stream) {
+                res.emplace_back(stream.read());
+            });
+            return res;
+        }
+
+        enbt::value value_read_stream::darray::read_one() {
+            enbt::value res;
+            read_one([&res](value_read_stream& s) {
+                res = s.read();
+            });
+            return res;
+        }
+
+        auto value_read_stream::darray::read_one_into(bool& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(uint8_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(uint16_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(uint32_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(uint64_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(int8_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(int16_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(int32_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(int64_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(float& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(double& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(enbt::raw_uuid& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_into(std::string& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(bool& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(uint8_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(uint16_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(uint32_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(uint64_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(int8_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(int16_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(int32_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(int64_t& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(float& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(double& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(enbt::raw_uuid& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::darray::read_one_as(std::string& res) -> darray& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        value_read_stream::array::array(std::istream& read_stream, enbt::type_id arr_type_id) : read_stream(read_stream), arr_type_id(arr_type_id) {
+            arr_pos = read_stream.tellg();
+            items = read_define_len(read_stream, arr_type_id);
+            if (items)
+                current_type_id = read_type_id(read_stream);
+        }
+
+        value_read_stream::array::~array() {
+            if (std::uncaught_exceptions())
+                return;
+            iterable([](auto& it) {
+                it.skip();
+            });
+        }
+
+        size_t value_read_stream::array::size() const noexcept {
+            return items;
+        }
+
+        size_t value_read_stream::array::current_index() const noexcept {
+            return current_item;
+        }
+
+        std::vector<enbt::value> value_read_stream::array::read() {
+            std::vector<enbt::value> res;
+            res.reserve(items - current_item);
+            iterable([&res](value_read_stream& stream) {
+                res.emplace_back(stream.read());
+            });
+            return res;
+        }
+
+        enbt::value value_read_stream::array::peek_at(std::size_t index) {
+            if (items <= index)
+                throw std::out_of_range("Index points out of the array range");
+            auto old_pos = read_stream.tellg();
+            enbt::value res;
+            try {
+                if (old_pos != arr_pos)
+                    read_stream.seekg(arr_pos);
+                if (current_type_id.type == type::bit) {
+                    char bool_res[1];
+                    read_stream.read(bool_res, 1);
+                    return bool(bool_res[0] & (1 << (index % 8)));
+                }
+                index_array(read_stream, index, arr_type_id);
+                value_read_stream stream(read_stream);
+                res = stream.read();
+            } catch (...) {
+                read_stream.seekg(old_pos);
+                throw;
+            }
+            read_stream.seekg(old_pos);
+            return res;
+        }
+
+        enbt::value value_read_stream::array::read_one() {
+            enbt::value res;
+            read_one([&res](value_read_stream& s) {
+                res = s.read();
+            });
+            return res;
+        }
+
+        auto value_read_stream::array::read_one_into(bool& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(uint8_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(uint16_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(uint32_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(uint64_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(int8_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(int16_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(int32_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(int64_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(float& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(double& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(enbt::raw_uuid& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_into(std::string& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_into(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(bool& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(uint8_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(uint16_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(uint32_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(uint64_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(int8_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(int16_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(int32_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(int64_t& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(float& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(double& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(enbt::raw_uuid& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        auto value_read_stream::array::read_one_as(std::string& res) -> array& {
+            return read_one([&res](value_read_stream& inner) {
+                inner.read_as(res);
+            });
+        }
+
+        value_read_stream::compound::compound(std::istream& read_stream, enbt::type_id current_type_id, bool enable_collector_strict_order) : read_stream(read_stream), current_type_id(current_type_id), enable_collector_strict_order(enable_collector_strict_order) {
+            comp_pos = read_stream.tellg();
+            items = read_define_len(read_stream, current_type_id);
+        }
+
+        value_read_stream::compound::~compound() {
+            if (std::uncaught_exceptions())
+                return;
+            iterable([](auto, auto& s) {
+                s.skip();
+            });
+        }
+
+        size_t value_read_stream::compound::size() const noexcept {
+            return items;
+        }
+
+        size_t value_read_stream::compound::current_index() const noexcept {
+            return current_item;
+        }
+
+        std::pair<std::string, enbt::value> value_read_stream::compound::read() {
+            if (current_item == items)
+                throw std::out_of_range("Tried to read value out of compounds range.");
+            auto str = read_string(read_stream);
+            current_item++;
+            return {str, read_token(read_stream)};
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, bool& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, uint8_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, uint16_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, uint32_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, uint64_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, int8_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, int16_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, int32_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, int64_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, float& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, double& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, enbt::raw_uuid& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_into(const std::string& name, std::string& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_into(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, bool& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, uint8_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, uint16_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, uint32_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, uint64_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, int8_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, int16_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, int32_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, int64_t& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, float& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, double& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, enbt::raw_uuid& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::collect_as(const std::string& name, std::string& res) -> compound& {
+            return collect(name, [&res](auto& stream) { stream.read_as(res); });
+        }
+
+        auto value_read_stream::compound::make_collect() -> compound& {
+            if (!enable_collector_strict_order)
+                return iterable([this](std::string& name, value_read_stream& stream) {
+                    if (auto it = automated_collector.find(name); it != automated_collector.end())
+                        it->second(stream);
+                });
+            else
+                return iterable([this, order = size_t(0)](std::string& name, value_read_stream& stream) mutable {
+                    if (auto& excepted = collector_strict_order_data.at(order++); excepted != name)
+                        throw enbt::exception("Invalid order, excepted: " + excepted + ", but got: " + name);
+                    automated_collector.at(name)(stream);
+                });
+        }
+
+        auto value_read_stream::compound::force_all_collect() -> compound& {
+            std::unordered_set<std::string> collected_items;
+            collected_items.reserve(automated_collector.size());
+            if (!enable_collector_strict_order)
+                iterable([this, &collected_items](auto& name, auto& stream) {
+                    if (auto it = automated_collector.find(name); it != automated_collector.end()) {
+                        it->second(stream);
+                        collected_items.emplace(name);
+                    }
+                });
+            else
+                return iterable([this, &collected_items, order = size_t(0)](auto& name, auto& stream) mutable {
+                    if (auto& excepted = collector_strict_order_data.at(order++); excepted != name)
+                        throw enbt::exception("Invalid order, excepted: " + excepted + ", but got: " + name);
+                    automated_collector.at(name)(stream);
+                    collected_items.emplace(name);
+                });
+
+            for (auto& [it, _] : automated_collector)
+                if (!collected_items.contains(it))
+                    throw enbt::exception("Not all elements is collected, invalid format");
+            return *this;
+        }
+
         enbt::value value_read_stream::read() {
-            if (readed)
-                throw enbt::exception("Invalid read state, item has been already readed");
+            check_io_state();
             readed = true;
             if (bit_value != -1)
-                return __impl__::_read_as_<char>(read_stream) & (1 << bit_value);
+                return bool(bit_value);
             else
                 return read_value(read_stream, current_type_id);
         }
 
-        void value_read_stream::skip() {
+        template <class T>
+        void value_read_stream__read_number(T& res, enbt::type_id tid, int8_t bit_value, auto& stream) {
+            switch (tid.type) {
+            case type::integer: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                    if (tid.is_signed)
+                        res = (T)read_value<std::int8_t>(stream, tid.get_endian());
+                    else
+                        res = (T)read_value<std::uint8_t>(stream, tid.get_endian());
+                    break;
+                case enbt::type_len::Short:
+                    if (tid.is_signed)
+                        res = (T)read_value<std::int16_t>(stream, tid.get_endian());
+                    else
+                        res = (T)read_value<std::uint16_t>(stream, tid.get_endian());
+                    break;
+                case enbt::type_len::Default:
+                    if (tid.is_signed)
+                        res = (T)read_value<std::int32_t>(stream, tid.get_endian());
+                    else
+                        res = (T)read_value<std::uint32_t>(stream, tid.get_endian());
+                    break;
+                case enbt::type_len::Long:
+                    if (tid.is_signed)
+                        res = (T)read_value<std::int64_t>(stream, tid.get_endian());
+                    else
+                        res = (T)read_value<std::uint64_t>(stream, tid.get_endian());
+                    break;
+                default:
+                    return;
+                }
+                break;
+            }
+            case type::var_integer: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                case enbt::type_len::Short:
+                    throw enbt::exception("not implemented");
+                case enbt::type_len::Default:
+                    if (tid.is_signed)
+                        res = (T)read_var<std::int32_t>(stream, std::endian::native);
+                    else
+                        res = (T)read_var<std::uint32_t>(stream, std::endian::native);
+                    break;
+                case enbt::type_len::Long:
+                    if (tid.is_signed)
+                        res = (T)read_var<std::int64_t>(stream, std::endian::native);
+                    else
+                        res = (T)read_var<std::uint64_t>(stream, std::endian::native);
+                    break;
+                }
+                break;
+            }
+            case type::floating: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                case enbt::type_len::Short:
+                    throw enbt::exception("not implemented");
+                case enbt::type_len::Default:
+                    res = (T)read_value<float>(stream, tid.get_endian());
+                    break;
+                case enbt::type_len::Long:
+                    res = (T)read_value<double>(stream, tid.get_endian());
+                    break;
+                }
+                break;
+            }
+            case type::comp_integer: {
+                std::uint64_t val = read_compress_len(stream);
+                res = (T)val;
+                if ((std::uint64_t)res != val)
+                    throw enbt::exception("Failed to cast comp_integer to value");
+                break;
+            }
+            case type::bit:
+                res = (T)(bit_value != -1 ? bool(bit_value) : tid.is_signed);
+                break;
+            case type::none:
+                break;
+            default:
+                throw enbt::exception("Non castable value to numeric type");
+            }
+        }
+
+        void value_read_stream__read_number_to_string(std::string& res, enbt::type_id tid, int8_t bit_value, auto& stream) {
+            switch (tid.type) {
+            case type::integer: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                    if (tid.is_signed)
+                        res = std::to_string(read_value<std::int8_t>(stream, tid.get_endian()));
+                    else
+                        res = std::to_string(read_value<std::uint8_t>(stream, tid.get_endian()));
+                    break;
+                case enbt::type_len::Short:
+                    if (tid.is_signed)
+                        res = std::to_string(read_value<std::int16_t>(stream, tid.get_endian()));
+                    else
+                        res = std::to_string(read_value<std::uint16_t>(stream, tid.get_endian()));
+                    break;
+                case enbt::type_len::Default:
+                    if (tid.is_signed)
+                        res = std::to_string(read_value<std::int32_t>(stream, tid.get_endian()));
+                    else
+                        res = std::to_string(read_value<std::uint32_t>(stream, tid.get_endian()));
+                    break;
+                case enbt::type_len::Long:
+                    if (tid.is_signed)
+                        res = std::to_string(read_value<std::int64_t>(stream, tid.get_endian()));
+                    else
+                        res = std::to_string(read_value<std::uint64_t>(stream, tid.get_endian()));
+                    break;
+                default:
+                    return;
+                }
+                break;
+            }
+            case type::var_integer: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                case enbt::type_len::Short:
+                    throw enbt::exception("not implemented");
+                case enbt::type_len::Default:
+                    if (tid.is_signed)
+                        res = std::to_string(read_var<std::int32_t>(stream, std::endian::native));
+                    else
+                        res = std::to_string(read_var<std::uint32_t>(stream, std::endian::native));
+                    break;
+                case enbt::type_len::Long:
+                    if (tid.is_signed)
+                        res = std::to_string(read_var<std::int64_t>(stream, std::endian::native));
+                    else
+                        res = std::to_string(read_var<std::uint64_t>(stream, std::endian::native));
+                    break;
+                }
+                break;
+            }
+            case type::floating: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                case enbt::type_len::Short:
+                    throw enbt::exception("not implemented");
+                case enbt::type_len::Default:
+                    res = std::to_string(read_value<float>(stream, tid.get_endian()));
+                    break;
+                case enbt::type_len::Long:
+                    res = std::to_string(read_value<double>(stream, tid.get_endian()));
+                    break;
+                }
+                break;
+            }
+            case type::comp_integer:
+                res = std::to_string(read_compress_len(stream));
+                break;
+            case type::bit:
+                if (bit_value != -1 ? bool(bit_value) : tid.is_signed)
+                    res = "true";
+                else
+                    res = "false";
+                break;
+            case type::uuid:
+                res = read_value<raw_uuid>(stream, tid.get_endian()).to_string();
+                break;
+
+            case type::none:
+                res = "none";
+                break;
+            default:
+                throw enbt::exception("Non castable value to numeric type");
+            }
+        }
+
+        template <class T>
+        void value_read_stream__read_number_exact(T& res, enbt::type_id tid, int8_t bit_value, auto& stream) {
+            switch (tid.type) {
+            case type::integer: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<std::int8_t, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<std::uint8_t, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                case enbt::type_len::Short:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<std::int16_t, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<std::uint16_t, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                case enbt::type_len::Default:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<std::int32_t, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<std::uint32_t, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                case enbt::type_len::Long:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<std::int64_t, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<std::uint64_t, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                default:
+                    break;
+                }
+                break;
+            }
+            case type::var_integer: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                case enbt::type_len::Short:
+                    throw enbt::exception("not implemented");
+                case enbt::type_len::Default:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<std::int32_t, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<std::uint32_t, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                case enbt::type_len::Long:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<std::int64_t, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<std::uint64_t, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                }
+                break;
+            }
+            case type::floating: {
+                switch (tid.length) {
+                case enbt::type_len::Tiny:
+                case enbt::type_len::Short:
+                    throw enbt::exception("not implemented");
+                case enbt::type_len::Default:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<float, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<double, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                case enbt::type_len::Long:
+                    if (tid.is_signed) {
+                        if constexpr (std::is_same_v<std::int64_t, T>)
+                            return value_read_stream__read_number(res, tid, bit_value, stream);
+                    } else if constexpr (std::is_same_v<std::uint64_t, T>)
+                        return value_read_stream__read_number(res, tid, bit_value, stream);
+                    break;
+                }
+                break;
+            }
+            case type::comp_integer: {
+                if constexpr (std::is_same_v<std::uint64_t, T>)
+                    return value_read_stream__read_number(res, tid, bit_value, stream);
+                break;
+            }
+            case type::bit:
+                if constexpr (std::is_same_v<bool, T>)
+                    return value_read_stream__read_number(res, tid, bit_value, stream);
+                break;
+            default:
+                break;
+            }
+            throw enbt::exception("The type is not same as excepted");
+        }
+
+        void value_read_stream::check_io_state() {
             if (readed)
                 throw enbt::exception("Invalid read state, item has been already readed");
+        }
+
+        value_read_stream& value_read_stream::read_into(bool& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(uint8_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(uint16_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(uint32_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(uint64_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(int8_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(int16_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(int32_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(int64_t& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(float& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(double& res) {
+            check_io_state();
+            value_read_stream__read_number_exact(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(enbt::raw_uuid& res) {
+            check_io_state();
+            if (get_type_id().type == type::uuid) {
+                res = read_value<enbt::raw_uuid>(read_stream, get_type_id().get_endian());
+                readed = true;
+            } else
+                throw enbt::exception("The type is not same as excepted");
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_into(std::string& res) {
+            check_io_state();
+            if (get_type_id().type == type::string) {
+                res = read_string(read_stream);
+                readed = true;
+            } else
+                throw enbt::exception("The type is not same as excepted");
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(bool& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(uint8_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(uint16_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(uint32_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(uint64_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(int8_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(int16_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(int32_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(int64_t& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(float& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(double& res) {
+            check_io_state();
+            value_read_stream__read_number(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(enbt::raw_uuid& res) {
+            check_io_state();
+            if (get_type_id().type == type::uuid) {
+                res = read_value<enbt::raw_uuid>(read_stream, get_type_id().get_endian());
+                readed = true;
+            } else if (get_type_id().type == type::string)
+                raw_uuid::from_uuid_string(res, read_string(read_stream));
+            else
+                throw enbt::exception("The type is not same as excepted");
+            readed = true;
+            return *this;
+        }
+
+        value_read_stream& value_read_stream::read_as(std::string& res) {
+            check_io_state();
+            value_read_stream__read_number_to_string(res, get_type_id(), bit_value, read_stream);
+            readed = true;
+            return *this;
+        }
+
+        void value_read_stream::skip() {
+            check_io_state();
             skip_value(read_stream, current_type_id);
             readed = true;
         }
 
-        size_t value_read_stream::peek_size() {
+        auto value_read_stream::read_darray() -> darray {
             if (readed)
                 throw enbt::exception("Invalid read state, item has been already readed");
+            readed = true;
+            return darray(read_stream, current_type_id);
+        }
+
+        auto value_read_stream::read_array() -> array {
+            if (readed)
+                throw enbt::exception("Invalid read state, item has been already readed");
+            readed = true;
+            return array(read_stream, current_type_id);
+        }
+
+        auto value_read_stream::read_compound(bool enable_collector_strict_order) -> compound {
+            if (readed)
+                throw enbt::exception("Invalid read state, item has been already readed");
+            readed = true;
+            return compound(read_stream, current_type_id, enable_collector_strict_order);
+        }
+
+        auto value_read_stream::make_peek() -> peek_stream {
+            if (readed)
+                throw enbt::exception("Invalid read state, item has been already readed");
+            return {read_stream, current_type_id, bit_value};
+        }
+
+        size_t value_read_stream::peek_size() {
+            check_io_state();
             auto old_state = read_stream.rdstate();
             auto old_pos = read_stream.tellg();
             std::uint64_t len = 0;
@@ -2573,6 +3683,7 @@ namespace enbt {
         }
 
         value_write_stream::darray::~darray() {
+            write_stream.flush();
             auto pos = write_stream.tellp();
             write_stream.seekp(type_size_field_pos);
             auto typ = enbt::type_id(enbt::type::darray, enbt::type_len::Long);
@@ -2640,6 +3751,7 @@ namespace enbt {
         }
 
         value_write_stream::compound::~compound() {
+            write_stream.flush();
             auto pos = write_stream.tellp();
             write_stream.seekp(type_size_field_pos);
             auto typ = enbt::type_id(enbt::type::compound, enbt::type_len::Long);
@@ -2654,6 +3766,27 @@ namespace enbt {
             write_token(write_stream, value);
             items++;
             return *this;
+        }
+
+        value_write_stream::optional::optional(std::ostream& write_stream, bool write_type_id_) : write_stream(write_stream) {
+            if (!write_type_id_)
+                is_written = true;
+        }
+
+        value_write_stream::optional::~optional() {
+            if (!is_written)
+                write_type_id(write_stream, enbt::type_id(enbt::type::optional, false));
+        }
+
+        void value_write_stream::optional::write(const enbt::value& value) {
+            if (has_value)
+                throw std::runtime_error("Tried to write optional multiple times.");
+            if (!is_written) {
+                write_type_id(write_stream, enbt::type_id(enbt::type::optional, true));
+                is_written = true;
+            }
+            has_value = true;
+            write_token(write_stream, value);
         }
 
         void value_write_stream::write(const enbt::value& value) {
@@ -2677,6 +3810,22 @@ namespace enbt {
         value_write_stream::array value_write_stream::write_array(size_t size) {
             written_type_id = enbt::type_id(enbt::type::array, enbt::calc_type_len(size));
             return array(write_stream, size, need_to_write_type_id);
+        }
+
+        value_write_stream::optional value_write_stream::write_optional() {
+            written_type_id = enbt::type_id(enbt::type::optional);
+            return optional(write_stream, need_to_write_type_id);
+        }
+
+        void value_write_stream::write_log_item(const enbt::value& value) {
+            written_type_id = enbt::type_id(enbt::type::log_item);
+            if (need_to_write_type_id)
+                write_type_id(write_stream, written_type_id);
+            std::ostringstream temp_stream;
+            value_write_stream inner(temp_stream);
+            inner.write(value);
+            write_compress_len(write_stream, temp_stream.tellp());
+            write_stream << temp_stream.rdbuf();
         }
 
         value_write_stream::value_write_stream(std::ostream& write_stream, bool need_to_write_type_id)
