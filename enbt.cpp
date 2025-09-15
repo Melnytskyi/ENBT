@@ -1656,6 +1656,13 @@ namespace enbt {
             write_array(write_stream, str_ref.data(), size_without_null);
         }
 
+        void write_string(std::ostream& write_stream, std::string_view val) {
+            std::size_t real_size = val.size();
+            std::size_t size_without_null = real_size ? (val[real_size - 1] != 0 ? real_size : real_size - 1) : 0;
+            write_compress_len(write_stream, size_without_null);
+            write_array(write_stream, val.data(), size_without_null);
+        }
+
         template <class t>
         void write_define_len(std::ostream& write_stream, t value) {
             return write_value(write_stream, value, std::endian::little);
@@ -2522,14 +2529,11 @@ namespace enbt {
         }
 
         value_read_stream::~value_read_stream() {
-            if (std::uncaught_exceptions())
-                return;
             if (!readed)
                 skip();
         }
 
         value_read_stream::darray::darray(std::istream& read_stream, enbt::type_id current_type_id) : read_stream(read_stream), current_type_id(current_type_id) {
-            arr_pos = read_stream.tellg();
             items = read_define_len(read_stream, current_type_id);
         }
 
@@ -2547,26 +2551,6 @@ namespace enbt {
 
         size_t value_read_stream::darray::current_index() const noexcept {
             return current_item;
-        }
-
-        enbt::value value_read_stream::darray::peek_at(std::size_t index) {
-            if (items <= index)
-                throw std::out_of_range("Index points out of the array range");
-            auto old_pos = read_stream.tellg();
-            enbt::value res;
-            try {
-                if (old_pos != arr_pos)
-                    read_stream.seekg(arr_pos);
-
-                index_array(read_stream, index, current_type_id);
-                value_read_stream stream(read_stream);
-                res = stream.read();
-            } catch (...) {
-                read_stream.seekg(old_pos);
-                throw;
-            }
-            read_stream.seekg(old_pos);
-            return res;
         }
 
         std::vector<enbt::value> value_read_stream::darray::read() {
@@ -2743,7 +2727,6 @@ namespace enbt {
         }
 
         value_read_stream::array::array(std::istream& read_stream, enbt::type_id arr_type_id) : read_stream(read_stream), arr_type_id(arr_type_id) {
-            arr_pos = read_stream.tellg();
             items = read_define_len(read_stream, arr_type_id);
             if (items)
                 current_type_id = read_type_id(read_stream);
@@ -2771,30 +2754,6 @@ namespace enbt {
             iterable([&res](value_read_stream& stream) {
                 res.emplace_back(stream.read());
             });
-            return res;
-        }
-
-        enbt::value value_read_stream::array::peek_at(std::size_t index) {
-            if (items <= index)
-                throw std::out_of_range("Index points out of the array range");
-            auto old_pos = read_stream.tellg();
-            enbt::value res;
-            try {
-                if (old_pos != arr_pos)
-                    read_stream.seekg(arr_pos);
-                if (current_type_id.type == type::bit) {
-                    char bool_res[1];
-                    read_stream.read(bool_res, 1);
-                    return bool(bool_res[0] & (1 << (index % 8)));
-                }
-                index_array(read_stream, index, arr_type_id);
-                value_read_stream stream(read_stream);
-                res = stream.read();
-            } catch (...) {
-                read_stream.seekg(old_pos);
-                throw;
-            }
-            read_stream.seekg(old_pos);
             return res;
         }
 
@@ -2963,7 +2922,6 @@ namespace enbt {
         }
 
         value_read_stream::compound::compound(std::istream& read_stream, enbt::type_id current_type_id, bool enable_collector_strict_order) : read_stream(read_stream), current_type_id(current_type_id), enable_collector_strict_order(enable_collector_strict_order) {
-            comp_pos = read_stream.tellg();
             items = read_define_len(read_stream, current_type_id);
         }
 
@@ -3310,8 +3268,11 @@ namespace enbt {
             case type::none:
                 res = "none";
                 break;
+            case type::string:
+                res = read_string(stream);
+                break;
             default:
-                throw enbt::exception("Non castable value to numeric type");
+                throw enbt::exception("Non castable value to string type");
             }
         }
 
@@ -3768,6 +3729,24 @@ namespace enbt {
             return *this;
         }
 
+        value_write_stream::compound_fixed::compound_fixed(std::ostream& write_stream, size_t size, bool set_type_id)
+            : write_stream(write_stream), items_to_write(size) {
+            if (set_type_id)
+                write_type_id(write_stream, enbt::type_id(enbt::type::compound, calc_type_len(size), false));
+            write_define_len(write_stream, size, enbt::type_id(enbt::type::compound, calc_type_len(size), false));
+        }
+
+        value_write_stream::compound_fixed::~compound_fixed() {}
+
+        value_write_stream::compound_fixed& value_write_stream::compound_fixed::write(std::string_view filed_name, const enbt::value& value) {
+            if (items_to_write == 0)
+                throw std::invalid_argument("compound is full");
+            --items_to_write;
+            write_string(write_stream, filed_name);
+            write_token(write_stream, value);
+            return *this;
+        }
+
         value_write_stream::optional::optional(std::ostream& write_stream, bool write_type_id_) : write_stream(write_stream) {
             if (!write_type_id_)
                 is_written = true;
@@ -3795,6 +3774,96 @@ namespace enbt {
                 write_token(write_stream, value);
             else
                 write_value(write_stream, value);
+        }
+
+        void value_write_stream::write(bool res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::bit, res});
+            else
+                throw std::invalid_argument("The bool value is encoded in type and could't save it without type");
+        }
+
+        void value_write_stream::write(uint8_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Tiny, false});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(uint16_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Short, false});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(uint32_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Default, false});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(uint64_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Long, false});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(int8_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Tiny, true});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(int16_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Short, true});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(int32_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Default, true});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(int64_t res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::integer, type_len::Long, true});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(float res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::floating, type_len::Default, true});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(double res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::floating, type_len::Long, true});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(enbt::raw_uuid res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::uuid});
+            write_value(write_stream, res);
+        }
+
+        void value_write_stream::write(const std::string& res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::string});
+            write_string(write_stream, res);
+        }
+
+        void value_write_stream::write(std::string_view res) {
+            if (need_to_write_type_id)
+                write_token(write_stream, type_id{type::string});
+            write_string(write_stream, res);
+        }
+
+        value_write_stream::compound_fixed value_write_stream::write_compound(size_t size) {
+            written_type_id = enbt::type_id(enbt::type::compound, calc_type_len(size));
+            return compound_fixed(write_stream, size, need_to_write_type_id);
         }
 
         value_write_stream::compound value_write_stream::write_compound() {

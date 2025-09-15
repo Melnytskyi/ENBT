@@ -11,6 +11,7 @@ namespace enbt {
         void write_compress_len(std::ostream& write_stream, std::uint64_t len);
         void write_type_id(std::ostream& write_stream, enbt::type_id tid);
         void write_string(std::ostream& write_stream, const value& val);
+        void write_string(std::ostream& write_stream, std::string_view val);
         void write_define_len(std::ostream& write_stream, std::uint64_t len, enbt::type_id tid);
         void initialize_version(std::ostream& write_stream);
         void write_compound(std::ostream& write_stream, const value& val);
@@ -21,6 +22,9 @@ namespace enbt {
         void write_value(std::ostream& write_stream, const value& val);
         void write_token(std::ostream& write_stream, const value& val);
 
+        inline void write_string(std::ostream& write_stream, const std::string& val) {
+            write_string(write_stream, (std::string_view)val);
+        }
 
         enbt::type_id read_type_id(std::istream& read_stream);
         std::size_t read_define_len(std::istream& read_stream, enbt::type_id tid);
@@ -268,7 +272,6 @@ namespace enbt {
 
             class darray {
                 std::istream& read_stream;
-                std::streampos arr_pos;
                 std::size_t current_item = 0;
                 std::size_t items = 0;
                 enbt::type_id current_type_id;
@@ -280,29 +283,6 @@ namespace enbt {
 
                 size_t size() const noexcept;
                 size_t current_index() const noexcept;
-                enbt::value peek_at(std::size_t index);
-
-                template <class FN>
-                void peek_at(std::size_t index, FN&& fn)
-                    requires(std::is_invocable_v<FN, value_read_stream&>)
-                {
-                    if (items <= index)
-                        throw std::out_of_range("Index points out of the array range");
-                    auto old_pos = read_stream.tellg();
-                    try {
-                        if (old_pos != arr_pos)
-                            read_stream.seekg(arr_pos);
-
-                        index_array(read_stream, index, current_type_id);
-                        value_read_stream stream(read_stream);
-                        fn(stream);
-                    } catch (...) {
-                        read_stream.seekg(old_pos);
-                        throw;
-                    }
-                    read_stream.seekg(old_pos);
-                }
-
                 std::vector<enbt::value> read();
                 enbt::value read_one();
                 darray& read_one_into(bool& res);
@@ -356,7 +336,6 @@ namespace enbt {
 
             class array {
                 std::istream& read_stream;
-                std::streampos arr_pos;
                 std::size_t current_item = 0;
                 std::size_t items = 0;
                 enbt::type_id arr_type_id;
@@ -369,36 +348,6 @@ namespace enbt {
                 size_t size() const noexcept;
                 size_t current_index() const noexcept;
                 std::vector<enbt::value> read();
-                enbt::value peek_at(std::size_t index);
-
-                template <class FN>
-                array& peek_at(std::size_t index, FN&& fn)
-                    requires(std::is_invocable_v<FN, value_read_stream&>)
-                {
-                    if (items <= index)
-                        throw std::out_of_range("Index points out of the array range");
-                    auto old_pos = read_stream.tellg();
-                    enbt::value res;
-                    try {
-                        if (old_pos != arr_pos)
-                            read_stream.seekg(arr_pos);
-
-                        index_array(read_stream, index, arr_type_id);
-                        if (current_type_id.type == type::bit) {
-                            value_read_stream stream(read_stream, current_type_id, uint8_t(index % 8));
-                            fn(stream);
-                        } else {
-                            value_read_stream stream(read_stream, current_type_id);
-                            fn(stream);
-                        }
-                    } catch (...) {
-                        read_stream.seekg(old_pos);
-                        throw;
-                    }
-                    read_stream.seekg(old_pos);
-                    return *this;
-                }
-
                 enbt::value read_one();
                 array& read_one_into(bool& res);
                 array& read_one_into(uint8_t& res);
@@ -461,7 +410,6 @@ namespace enbt {
                 std::istream& read_stream;
                 std::size_t current_item = 0;
                 std::size_t items = 0;
-                std::streampos arr_pos;
                 enbt::type_id current_type_id;
 
                 sarray(std::istream& read_stream, enbt::type_id current_type_id)
@@ -507,7 +455,7 @@ namespace enbt {
                     auto old_pos = read_stream.tellg();
                     T val;
                     try {
-                        read_stream.seekg(arr_pos + std::streampos(index * sizeof(T)));
+                        read_stream.seekg(old_pos + std::streampos(index * sizeof(T)) - std::streampos(current_item * sizeof(T)));
                         read_stream.read((char*)&val, sizeof(T));
                     } catch (...) {
                         read_stream.seekg(old_pos);
@@ -550,7 +498,6 @@ namespace enbt {
                 std::istream& read_stream;
                 std::size_t current_item = 0;
                 std::size_t items = 0;
-                std::streampos comp_pos;
                 enbt::type_id current_type_id;
                 bool enable_collector_strict_order = false;
 
@@ -575,45 +522,6 @@ namespace enbt {
                     fn(str, inner);
                     current_item++;
                     return *this;
-                }
-
-                enbt::value peek_at(std::string_view index) {
-                    auto old_pos = read_stream.tellg();
-                    enbt::value res;
-                    try {
-                        if (old_pos != comp_pos)
-                            read_stream.seekg(comp_pos);
-                        if (find_value_compound(read_stream, current_type_id, index)) {
-                            value_read_stream stream(read_stream);
-                            res = stream.read();
-                        } else
-                            throw enbt::exception("Key not found");
-                    } catch (...) {
-                        read_stream.seekg(old_pos);
-                        throw;
-                    }
-                    read_stream.seekg(old_pos);
-                    return res;
-                }
-
-                template <class FN>
-                void peek_at(std::string_view index, FN&& fn)
-                    requires(std::is_invocable_v<FN, value_read_stream&>)
-                {
-                    auto old_pos = read_stream.tellg();
-                    try {
-                        if (old_pos != comp_pos)
-                            read_stream.seekg(comp_pos);
-                        if (find_value_compound(read_stream, current_type_id, index)) {
-                            value_read_stream stream(read_stream);
-                            fn(stream);
-                        } else
-                            throw enbt::exception("Key not found");
-                    } catch (...) {
-                        read_stream.seekg(old_pos);
-                        throw;
-                    }
-                    read_stream.seekg(old_pos);
                 }
 
                 template <class FN>
@@ -665,8 +573,8 @@ namespace enbt {
                 template <class FN>
                 compound& collect_iterate(const std::string& name, FN&& fn)
                     requires(
-                        std::is_invocable_v<FN, value_read_stream&> 
-                        || std::is_invocable_v<FN, std::string_view, value_read_stream&> 
+                        std::is_invocable_v<FN, value_read_stream&>
+                        || std::is_invocable_v<FN, std::string_view, value_read_stream&>
                         || std::is_invocable_v<FN, const std::string&, value_read_stream&>
                     )
                 {
@@ -1154,6 +1062,62 @@ namespace enbt {
                 ~darray();
                 darray& write(const enbt::value&);
 
+                inline darray& write(bool res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(uint8_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(uint16_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(uint32_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(uint64_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(int8_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(int16_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(int32_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(int64_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(float res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(double res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(enbt::raw_uuid res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(const std::string& res) {
+                    return write([&res](auto& s) { s.write(res); });
+                }
+
+                inline darray& write(std::string_view res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
                 template <class FN>
                 darray& write(FN&& fn)
                     requires(std::is_invocable_v<FN, value_write_stream&>)
@@ -1189,7 +1153,7 @@ namespace enbt {
             class array {
                 std::ostream& write_stream;
                 std::size_t items_to_write = 0;
-                enbt::type_id current_type_id;
+                ::enbt::type_id current_type_id;
                 std::int8_t bit_i = 0;
                 std::uint8_t bit_value = 0;
                 bool type_set = false;
@@ -1199,13 +1163,83 @@ namespace enbt {
                 ~array();
                 array& write(const enbt::value&);
 
+                array& write(bool res) {
+                    if (items_to_write == 0)
+                        throw std::invalid_argument("array is full");
+                    if (!type_set) {
+                        current_type_id = enbt::type_id{enbt::type::bit};
+                        write_type_id(write_stream, current_type_id);
+                        type_set = true;
+                    }
+                    if (current_type_id != enbt::type_id{enbt::type::bit})
+                        throw enbt::exception("array type mismatch");
+                    if (bit_i >= 8) {
+                        bit_i = 0;
+                        write_stream.write((char*)&bit_value, sizeof(bit_value));
+                    }
+                    bit_value = (((uint8_t)res) & (1 << bit_i));
+                    items_to_write--;
+                    return *this;
+                }
+
+                inline array& write(uint8_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(uint16_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(uint32_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(uint64_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(int8_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(int16_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(int32_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(int64_t res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(float res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(double res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(enbt::raw_uuid res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(const std::string& res) {
+                    return write([&res](auto& s) { s.write(res); });
+                }
+
+                inline array& write(std::string_view res) {
+                    return write([res](auto& s) { s.write(res); });
+                }
+
                 template <class FN>
-                void write(FN&& fn)
+                array& write(FN&& fn)
                     requires(std::is_invocable_v<FN, value_write_stream&>)
                 {
                     if (items_to_write == 0)
                         throw std::invalid_argument("array is full");
-                    auto pos = write_stream.tellp();
                     value_write_stream inner(write_stream, !type_set);
                     fn(inner);
                     if (!type_set) {
@@ -1213,11 +1247,10 @@ namespace enbt {
                         if (current_type_id.type == type::bit)
                             throw enbt::exception("Bit type for in type::array is compressed, using functional iterable is not allowed.");
                         type_set = true;
-                    } else if (inner.get_written_type_id() != current_type_id) {
-                        write_stream.seekp(pos);
+                    } else if (inner.get_written_type_id() != current_type_id)
                         throw enbt::exception("array type mismatch");
-                    }
                     items_to_write--;
+                    return *this;
                 }
 
                 //fn(item, inner)
@@ -1288,6 +1321,62 @@ namespace enbt {
 
                 compound& write(std::string_view filed_name, const enbt::value&);
 
+                inline compound& write(std::string_view filed_name, bool res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, uint8_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, uint16_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, uint32_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, uint64_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, int8_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, int16_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, int32_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, int64_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, float res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, double res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, enbt::raw_uuid res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, const std::string& res) {
+                    return write(filed_name, [&res](auto& s) { s.write(res); });
+                }
+
+                inline compound& write(std::string_view filed_name, std::string_view res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
                 template <class FN>
                 compound& write(std::string_view filed_name, FN&& fn)
                     requires(std::is_invocable_v<FN, value_write_stream&>)
@@ -1319,6 +1408,105 @@ namespace enbt {
                 }
             };
 
+            class compound_fixed {
+                std::ostream& write_stream;
+                std::size_t items_to_write;
+
+            public:
+                compound_fixed(std::ostream& write_stream, size_t size, bool write_type_id);
+                ~compound_fixed();
+
+                compound_fixed& write(std::string_view filed_name, const enbt::value&);
+
+                inline compound_fixed& write(std::string_view filed_name, bool res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, uint8_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, uint16_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, uint32_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, uint64_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, int8_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, int16_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, int32_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, int64_t res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, float res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, double res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, enbt::raw_uuid res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, const std::string& res) {
+                    return write(filed_name, [&res](auto& s) { s.write(res); });
+                }
+
+                inline compound_fixed& write(std::string_view filed_name, std::string_view res) {
+                    return write(filed_name, [res](auto& s) { s.write(res); });
+                }
+
+                template <class FN>
+                compound_fixed& write(std::string_view filed_name, FN&& fn)
+                    requires(std::is_invocable_v<FN, value_write_stream&>)
+                {
+                    if (items_to_write == 0)
+                        throw std::invalid_argument("compound is full");
+                    --items_to_write;
+                    write_string(write_stream, filed_name);
+                    value_write_stream inner(write_stream);
+                    fn(inner);
+                    return *this;
+                }
+
+                //fn(name, item, inner)
+                template <class Iterable, class FN>
+                compound_fixed& iterable(const Iterable& iter, FN&& fn) {
+                    for (const auto& [name, item] : iter)
+                        write(name, [&](value_write_stream& inner) {
+                            fn(name, item, inner);
+                        });
+                    return *this;
+                }
+
+                template <class Iterable, class FN>
+                compound_fixed& iterable(const Iterable& iter) {
+                    for (const auto& [name, item] : iter)
+                        write(name, [&](value_write_stream& inner) {
+                            inner.write(item);
+                        });
+                    return *this;
+                }
+            };
+
             class optional {
                 std::ostream& write_stream;
                 bool is_written = false;
@@ -1328,6 +1516,62 @@ namespace enbt {
                 optional(std::ostream& write_stream, bool need_to_write_type_id);
                 ~optional();
                 void write(const enbt::value&);
+
+                inline void write(bool res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(uint8_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(uint16_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(uint32_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(uint64_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(int8_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(int16_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(int32_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(int64_t res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(float res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(double res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(enbt::raw_uuid res) {
+                    write([res](auto& s) { s.write(res); });
+                }
+
+                inline void write(const std::string& res) {
+                    write([&res](auto& s) { s.write(res); });
+                }
+
+                inline void write(std::string_view res) {
+                    write([res](auto& s) { s.write(res); });
+                }
 
                 template <class FN>
                 void write(FN&& fn)
@@ -1346,7 +1590,22 @@ namespace enbt {
             };
 
             void write(const enbt::value&);
+            void write(bool res);
+            void write(uint8_t res);
+            void write(uint16_t res);
+            void write(uint32_t res);
+            void write(uint64_t res);
+            void write(int8_t res);
+            void write(int16_t res);
+            void write(int32_t res);
+            void write(int64_t res);
+            void write(float res);
+            void write(double res);
+            void write(enbt::raw_uuid res);
+            void write(const std::string& res);
+            void write(std::string_view res);
             compound write_compound();
+            compound_fixed write_compound(size_t size);
             darray write_darray();
             array write_array(size_t size);
             optional write_optional();
@@ -1377,12 +1636,395 @@ namespace enbt {
             }
 
             template <class T>
+            void write_sarray_dir(const T* array, std::size_t size) {
+                enbt::type_id tid = simple_array<T>::enbt_type;
+                if (need_to_write_type_id)
+                    write_type_id(write_stream, tid);
+                write_compress_len(write_stream, size);
+                write_stream.write((const char*)array, size * sizeof(T));
+                written_type_id = simple_array<T>::enbt_type;
+            }
+
+            template <class T>
             sarray<T> write_sarray(size_t size) {
                 written_type_id = simple_array<T>::enbt_type;
                 return sarray<T>(write_stream, size, need_to_write_type_id);
             }
 
             value_write_stream(std::ostream& write_stream, bool need_to_write_type_id = true);
+        };
+
+        namespace collection {
+            template <template <class...> class map_base = std::unordered_map>
+            class compound_relaxed {
+                map_base<std::string, std::function<void(value_read_stream&)>> automated_collector;
+
+            public:
+                compound_relaxed() = default;
+                ~compound_relaxed() = default;
+
+                template <class FN>
+                compound_relaxed& collect(const std::string& name, FN&& fn)
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
+                {
+                    automated_collector[name] = std::forward<FN>(fn);
+                    return *this;
+                }
+
+                compound_relaxed& collect_into(const std::string& name, bool& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, uint8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, uint16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, uint32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, uint64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, int8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, int16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, int32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, int64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, float& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, double& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, enbt::raw_uuid& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_into(const std::string& name, std::string& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, bool& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, uint8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, uint16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, uint32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, uint64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, int8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, int16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, int32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, int64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, float& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, double& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, enbt::raw_uuid& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_relaxed& collect_as(const std::string& name, std::string& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                template <class FN>
+                compound_relaxed& collect_iterate(const std::string& name, FN&& fn)
+                    requires(
+                        std::is_invocable_v<FN, value_read_stream&>
+                        || std::is_invocable_v<FN, std::string_view, value_read_stream&>
+                        || std::is_invocable_v<FN, const std::string&, value_read_stream&>
+                    )
+                {
+                    automated_collector[name] = [fn](value_read_stream& stream) {
+                        stream.iterate(fn);
+                    };
+                    return *this;
+                }
+
+                template <class SIZE_FN, class FN>
+                compound_relaxed& collect_iterate(const std::string& name, SIZE_FN&& fn_size, FN&& fn)
+                    requires(
+                        (
+                            std::is_invocable_v<FN, value_read_stream&>
+                            || std::is_invocable_v<FN, std::string_view, value_read_stream&>
+                            || std::is_invocable_v<FN, const std::string&, value_read_stream&>
+                        )
+                        && std::is_invocable_v<SIZE_FN, uint64_t>
+                    )
+                {
+                    automated_collector[name] = [fn, fn_size](value_read_stream& stream) {
+                        stream.iterate(fn_size, fn);
+                    };
+                    return *this;
+                }
+
+                template <class FN>
+                compound_relaxed& make_collect(value_read_stream& stream, FN&& on_uncollected)
+                    requires(std::is_invocable_v<FN, const std::string&, value_read_stream&>)
+                {
+                    stream.iterate([this, &on_uncollected](const std::string& name, value_read_stream& stream) {
+                        if (auto it = automated_collector.find(name); it != automated_collector.end())
+                            it->second(stream);
+                        else
+                            on_uncollected(name, stream);
+                    });
+                    return *this;
+                }
+
+                compound_relaxed& make_collect(value_read_stream& stream) {
+                    return make_collect(stream, [](auto&, auto&) {});
+                }
+
+                compound_relaxed& force_all_collect(value_read_stream& stream) {
+                    std::unordered_set<std::string> collected_items;
+                    collected_items.reserve(automated_collector.size());
+                    stream.iterate([this, &collected_items](auto& name, auto& stream) {
+                        if (auto it = automated_collector.find(name); it != automated_collector.end()) {
+                            it->second(stream);
+                            collected_items.emplace(name);
+                        } else
+                            throw enbt::exception("Not all elements is collected, skipped item: " + name);
+                    });
+                    for (auto& [it, _] : automated_collector)
+                        if (!collected_items.contains(it))
+                            throw enbt::exception("Not all elements is collected, invalid format");
+                    return *this;
+                }
+            };
+
+            template <template <class...> class map_base = std::unordered_map, template <class...> class arr_base = std::vector>
+            class compound_strict {
+                map_base<std::string, std::function<void(value_read_stream&)>> automated_collector;
+                arr_base<std::string> collector_strict_order_data;
+
+            public:
+                compound_strict() = default;
+                ~compound_strict() = default;
+
+                template <class FN>
+                compound_strict& collect(const std::string& name, FN&& fn)
+                    requires(std::is_invocable_v<FN, value_read_stream&>)
+                {
+                    automated_collector[name] = std::forward<FN>(fn);
+                    collector_strict_order_data.push_back(name);
+                    return *this;
+                }
+
+                compound_strict& collect_into(const std::string& name, bool& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, uint8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, uint16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, uint32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, uint64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, int8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, int16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, int32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, int64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, float& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, double& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, enbt::raw_uuid& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_into(const std::string& name, std::string& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, bool& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, uint8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, uint16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, uint32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, uint64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, int8_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, int16_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, int32_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, int64_t& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, float& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, double& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, enbt::raw_uuid& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                compound_strict& collect_as(const std::string& name, std::string& res) {
+                    return collect(name, [&res](auto& stream) { stream.read_into(res); });
+                }
+
+                template <class FN>
+                compound_strict& collect_iterate(const std::string& name, FN&& fn)
+                    requires(
+                        std::is_invocable_v<FN, value_read_stream&>
+                        || std::is_invocable_v<FN, std::string_view, value_read_stream&>
+                        || std::is_invocable_v<FN, const std::string&, value_read_stream&>
+                    )
+                {
+                    automated_collector[name] = [fn](value_read_stream& stream) {
+                        stream.iterate(fn);
+                    };
+                    collector_strict_order_data.push_back(name);
+                    return *this;
+                }
+
+                template <class SIZE_FN, class FN>
+                compound_strict& collect_iterate(const std::string& name, SIZE_FN&& fn_size, FN&& fn)
+                    requires(
+                        (
+                            std::is_invocable_v<FN, value_read_stream&>
+                            || std::is_invocable_v<FN, std::string_view, value_read_stream&>
+                            || std::is_invocable_v<FN, const std::string&, value_read_stream&>
+                        )
+                        && std::is_invocable_v<SIZE_FN, uint64_t>
+                    )
+                {
+                    automated_collector[name] = [fn, fn_size](value_read_stream& stream) {
+                        stream.iterate(fn_size, fn);
+                    };
+                    collector_strict_order_data.push_back(name);
+                    return *this;
+                }
+
+                compound_strict& make_collect(value_read_stream& stream) {
+                    stream.iterate([this, order = size_t(0)](const std::string& name, value_read_stream& stream) mutable {
+                        if (order == collector_strict_order_data.size())
+                            throw enbt::exception("Too much elements");
+
+                        if (auto& excepted = collector_strict_order_data.at(order++); excepted != name)
+                            throw enbt::exception("Invalid order, excepted: " + excepted + ", but got: " + name);
+                        automated_collector.at(name)(stream);
+                    });
+                    return *this;
+                }
+
+                compound_strict& force_all_collect(value_read_stream& stream) {
+                    std::unordered_set<std::string> collected_items;
+                    collected_items.reserve(automated_collector.size());
+                    stream.iterate([this, &collected_items, order = size_t(0)](auto& name, auto& stream) mutable {
+                        if (order == collector_strict_order_data.size())
+                            throw enbt::exception("Too much elements");
+                        if (auto& excepted = collector_strict_order_data.at(order++); excepted != name)
+                            throw enbt::exception("Invalid order, excepted: " + excepted + ", but got: " + name);
+                        automated_collector.at(name)(stream);
+                        collected_items.emplace(name);
+                    });
+
+                    for (auto& [it, _] : automated_collector)
+                        if (!collected_items.contains(it))
+                            throw enbt::exception("Not all elements is collected, invalid format");
+                    return *this;
+                }
+            };
         };
     }
 }

@@ -53,6 +53,24 @@ namespace enbt {
         concept simple_cast_direct = requires(T val) { serialization_simple_cast<T>::direct_type; } && (sizeof(T) == sizeof(typename serialization_simple_cast<T>::direct_type));
 
         template <class T, class = void>
+        struct compact_matrix_simple_cast {
+            // to declare the type simple use:
+            // using direct_type = `other type`;//the type must be integral and not bigger by size as T
+        };
+
+        template <class T>
+        concept is_matrix_simple_cast_direct = requires {
+            typename compact_matrix_simple_cast<T>::direct_type;
+        } && std::is_integral_v<typename compact_matrix_simple_cast<T>::direct_type> && sizeof(T) >= sizeof(typename compact_matrix_simple_cast<T>::direct_type);
+
+        template <class T>
+            requires is_matrix_simple_cast_direct<T>
+        struct matrix_simple_cast_direct_data {
+            using type = typename compact_matrix_simple_cast<T>::direct_type;
+            static constexpr size_t size = sizeof(T) / sizeof(typename compact_matrix_simple_cast<T>::direct_type);
+        };
+
+        template <class T, class = void>
         struct serialization_simple_cast_data : public std::false_type {};
 
         template <class T>
@@ -76,7 +94,7 @@ namespace enbt {
             }
 
             static void read(T& value, value_read_stream& read_stream) {
-                value = T(read_stream.read());
+                read_stream.read_as(value);
             }
 
             static void write(const T& value, value_write_stream& write_stream) {
@@ -104,7 +122,11 @@ namespace enbt {
             }
 
             static void read(std::unique_ptr<T>& value, value_read_stream& read_stream) {
-                value = std::make_unique<T>(serialization<T>::read(read_stream));
+                if constexpr (std::is_default_constructible_v<T>) {
+                    value = std::make_unique<T>();
+                    serialization<T>::read(*value, read_stream);
+                } else
+                    value = std::make_unique<T>(serialization<T>::read(read_stream));
             }
 
             static void write(const std::unique_ptr<T>& value, value_write_stream& write_stream) {
@@ -135,7 +157,11 @@ namespace enbt {
             }
 
             static void read(std::shared_ptr<T>& value, value_read_stream& read_stream) {
-                value = std::make_shared<T>(serialization<T>::read(read_stream));
+                if constexpr (std::is_default_constructible_v<T>) {
+                    value = std::make_shared<T>();
+                    serialization<T>::read(*value, read_stream);
+                } else
+                    value = std::make_shared<T>(serialization<T>::read(read_stream));
             }
 
             static void write(const std::shared_ptr<T>& value, value_write_stream& write_stream) {
@@ -864,6 +890,8 @@ namespace enbt {
             static void read(T (&value)[N], value_read_stream& read_stream) {
                 if constexpr (std::is_integral_v<T>) {
                     read_stream.iterate_into(value, N);
+                } else if constexpr (is_matrix_simple_cast_direct<T[N]>) {
+                    read_stream.iterate_into(reinterpret_cast<typename matrix_simple_cast_direct_data<T[N]>::type*>(&value), matrix_simple_cast_direct_data<T[N]>::size);
                 } else if constexpr (serialization_simple_cast_data<T>::value) {
                     if constexpr (simple_cast_direct<T>) {
                         read_stream.iterate_into(value, N);
@@ -892,10 +920,15 @@ namespace enbt {
             static void write(const T (&value)[N], value_write_stream& write_stream) {
                 if constexpr (std::is_integral_v<T>)
                     write_stream.write_sarray_dir(value);
-                else if constexpr (serialization_simple_cast_data<T>::value) {
-                    if constexpr (simple_cast_direct<T>)
-                        write_stream.write_sarray<typename serialization_simple_cast_data<T>::type>(N).iterable(value, [](const T& value) { return reinterpret_cast<const typename serialization_simple_cast_data<T>::type&>(value); });
-                    else
+                else if constexpr (is_matrix_simple_cast_direct<T[N]>) {
+                    write_stream.write_sarray_dir(reinterpret_cast<const typename matrix_simple_cast_direct_data<T[N]>::type*>(&value), matrix_simple_cast_direct_data<T[N]>::size);
+                } else if constexpr (serialization_simple_cast_data<T>::value) {
+                    if constexpr (simple_cast_direct<T>) {
+                        if constexpr (std::is_integral_v<typename serialization_simple_cast_data<T>::type>)
+                            write_stream.write_sarray_dir(reinterpret_cast<const typename serialization_simple_cast_data<T>::type*>(value), N);
+                        else
+                            write_stream.write_sarray<typename serialization_simple_cast_data<T>::type>(N).iterable(value, [](const T& value) { return reinterpret_cast<const typename serialization_simple_cast_data<T>::type&>(value); });
+                    } else
                         write_stream.write_sarray<typename serialization_simple_cast_data<T>::type>(N).iterable(value, [](const T& value) { return serialization_simple_cast<T>::write_cast(value); });
                 } else
                     write_stream.write_array(N).iterable(value, [](const T& value, value_write_stream& write_stream) { serialization<T>::write(value, write_stream); });
@@ -904,9 +937,18 @@ namespace enbt {
             static void read(T (&value)[N], const enbt::value& from) {
                 if (from.is_array()) {
                     auto arr = from.as_array();
-                    size_t max_size = std::max<size_t>(arr.size(), N);
                     size_t i = 0;
-                    if constexpr (serialization_simple_cast_data<T>::value) {
+                    if constexpr (is_matrix_simple_cast_direct<T[N]>) {
+                        size_t max_size = std::max<size_t>(arr.size(), matrix_simple_cast_direct_data<T[N]>::size);
+                        size_t i = 0;
+                        auto dir_cast = reinterpret_cast<typename matrix_simple_cast_direct_data<T[N]>::type*>(&value);
+                        for (auto& it : arr) {
+                            if (max_size >= i)
+                                break;
+                            dir_cast[i++] = it;
+                        }
+                    } else if constexpr (serialization_simple_cast_data<T>::value) {
+                        size_t max_size = std::max<size_t>(arr.size(), N);
                         if constexpr (simple_cast_direct<T>) {
                             auto dir_cast = reinterpret_cast<typename serialization_simple_cast<T>::type*>(value);
                             for (auto& it : arr) {
@@ -922,6 +964,7 @@ namespace enbt {
                             }
                         }
                     } else {
+                        size_t max_size = std::max<size_t>(arr.size(), N);
                         for (auto& it : arr) {
                             if (max_size >= i)
                                 break;
@@ -929,7 +972,50 @@ namespace enbt {
                         }
                     }
                 } else if (from.is_sarray()) {
-                    if constexpr (serialization_simple_cast_data<T>::value) {
+                    if constexpr (is_matrix_simple_cast_direct<T[N]>) {
+                        static auto applicator = []<class Arr>(T(&value)[N], Arr arr) {
+                            size_t max_size = std::max<size_t>(arr.size(), matrix_simple_cast_direct_data<T[N]>::size);
+                            size_t i = 0;
+                            auto dir_cast = reinterpret_cast<typename matrix_simple_cast_direct_data<T[N]>::type*>(&value);
+                            for (auto& it : arr) {
+                                if (max_size >= i)
+                                    break;
+                                dir_cast[i++] = it;
+                            }
+                        };
+                        switch (from.get_type_len()) {
+                        case enbt::type_len::Tiny: {
+                            if (from.get_type_sign()) {
+                                applicator(value, from.as_ui8_array());
+                            } else
+                                applicator(value, from.as_i8_array());
+                            break;
+                        }
+                        case enbt::type_len::Short: {
+                            if (from.get_type_sign()) {
+                                applicator(value, from.as_ui16_array());
+                            } else
+                                applicator(value, from.as_i16_array());
+                            break;
+                        }
+                        case enbt::type_len::Default: {
+                            if (from.get_type_sign()) {
+                                applicator(value, from.as_ui32_array());
+                            } else
+                                applicator(value, from.as_i32_array());
+                            break;
+                        }
+                        case enbt::type_len::Long: {
+                            if (from.get_type_sign()) {
+                                applicator(value, from.as_ui64_array());
+                            } else
+                                applicator(value, from.as_i64_array());
+                            break;
+                        }
+                        default:
+                            break;
+                        }
+                    } else if constexpr (serialization_simple_cast_data<T>::value) {
                         if constexpr (simple_cast_direct<T>) {
                             static auto applicator = []<class Arr>(T(&value)[N], Arr arr) {
                                 size_t max_size = std::max<size_t>(arr.size(), N);
@@ -1065,7 +1151,9 @@ namespace enbt {
             }
 
             static void write(const T (&value)[N], enbt::value& to) {
-                if constexpr (serialization_simple_cast_data<T>::value) {
+                if constexpr (is_matrix_simple_cast_direct<T[N]>) {
+                    to = {reinterpret_cast<const typename matrix_simple_cast_direct_data<T[N]>::type*>(&value), matrix_simple_cast_direct_data<T[N]>::size};
+                } else if constexpr (serialization_simple_cast_data<T>::value) {
                     if constexpr (simple_cast_direct<T>) {
                         if constexpr (std::is_integral_v<typename serialization_simple_cast_data<T>::type>)
                             to = {reinterpret_cast<const typename serialization_simple_cast_data<T>::type*>(value), N};
