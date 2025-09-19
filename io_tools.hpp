@@ -2,6 +2,7 @@
 #define ENBT_IO_TOOLS
 #include "io.hpp"
 #include <map>
+#include <memory>
 #include <unordered_map>
 
 namespace enbt {

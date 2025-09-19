@@ -4,12 +4,14 @@
     #include <any>
     #include <bit>
     #include <cstdint>
-    #include <stdexcept>
+    #include <cstring>
     #include <initializer_list>
     #include <optional>
+    #include <stdexcept>
     #include <string>
     #include <unordered_map>
     #include <variant>
+    #include <vector>
     #define ENBT_VERSION_HEX 0x11
     #define ENBT_VERSION_STR "1.1"
 
@@ -46,16 +48,16 @@ namespace enbt {
         }
     }
 
-    class exception : public std::exception {
+    class exception : public std::runtime_error {
     public:
         exception(std::string&& reason)
-            : std::exception(reason.c_str()) {}
+            : std::runtime_error(reason.c_str()) {}
 
         exception(const char* reason)
-            : std::exception(reason) {}
+            : std::runtime_error(reason) {}
 
         exception()
-            : std::exception("Undefined enbt exception") {}
+            : std::runtime_error("Undefined enbt exception") {}
     };
 
     class compound_ref;
@@ -1398,9 +1400,11 @@ namespace enbt {
                 case enbt::type::darray:
                     (*(std::vector<value>::iterator*)pointer)--;
                     break;
+    #ifdef _WIN32
                 case enbt::type::compound:
                     (*(std::unordered_map<std::string, value>::iterator*)pointer)--;
                     break;
+    #endif
                 default:
                     throw enbt::exception("Unreachable exception in non debug environment");
                 }
@@ -1667,9 +1671,11 @@ namespace enbt {
                 case enbt::type::darray:
                     (*(std::vector<value>::iterator*)pointer)--;
                     break;
+    #ifdef _WIN32
                 case enbt::type::compound:
                     (*(std::unordered_map<std::string, value>::iterator*)pointer)--;
                     break;
+    #endif
                 default:
                     throw enbt::exception("Unreachable exception in non debug environment");
                 }
@@ -2013,7 +2019,7 @@ namespace enbt {
         }
 
         std::pair<iterator, bool> insert(value_type&& value) {
-            return proxy->emplace(_STD move(value));
+            return proxy->emplace(std::move(value));
         }
 
         decltype(auto) insert(const_iterator hint, const value_type& value) {
@@ -2021,7 +2027,7 @@ namespace enbt {
         }
 
         decltype(auto) insert(const_iterator hint, value_type&& value) {
-            return proxy->insert(hint, _STD move(value));
+            return proxy->insert(hint, std::move(value));
         }
 
         template <class Iterator>
@@ -2907,6 +2913,8 @@ namespace enbt {
     class compound : public compound_ref {
         value holder;
 
+        friend class value;
+
     public:
         compound()
             : holder(std::unordered_map<std::string, value>()) {
@@ -2986,24 +2994,16 @@ namespace enbt {
 
         [[nodiscard]] compound merge(const value& copy) &&;
         [[nodiscard]] compound merge(value&& move) &&;
+        [[nodiscard]] compound merge(const compound& copy) &&;
+        [[nodiscard]] compound merge(compound&& move) &&;
         [[nodiscard]] compound merge(const std::unordered_map<std::string, value>& copy) &&;
         [[nodiscard]] compound merge(std::unordered_map<std::string, value>&& move) &&;
-
-        [[nodiscard]] explicit operator value&() & {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator const value&() const& {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator value&&() && {
-            return std::move(holder);
-        }
     };
 
     class fixed_array : public fixed_array_ref {
         value holder;
+
+        friend class value;
 
     public:
         template <class T>
@@ -3075,22 +3075,12 @@ namespace enbt {
         [[nodiscard]] bool operator!=(const fixed_array& tag) const {
             return holder != tag.holder;
         }
-
-        [[nodiscard]] explicit operator value&() & {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator const value&() const& {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator value&&() && {
-            return std::move(holder);
-        }
     };
 
     class dynamic_array : public dynamic_array_ref {
         value holder;
+
+        friend class value;
 
     public:
         template <class T>
@@ -3175,22 +3165,11 @@ namespace enbt {
         [[nodiscard]] bool operator!=(const dynamic_array& tag) const {
             return holder != tag.holder;
         }
-
-        [[nodiscard]] explicit operator value&() & {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator const value&() const& {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator value&&() && {
-            return std::move(holder);
-        }
     };
 
     template <class T>
     class simple_array : public simple_array_ref<T> {
+        friend class value;
         value holder;
 
     public:
@@ -3284,18 +3263,6 @@ namespace enbt {
         [[nodiscard]] bool operator!=(const simple_array& tag) const {
             return holder != tag.holder;
         }
-
-        [[nodiscard]] explicit operator value&() & {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator const value&() const& {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator value&&() && {
-            return std::move(holder);
-        }
     };
 
     using simple_array_ref_ui8 = simple_array_ref<std::uint8_t>;
@@ -3318,6 +3285,7 @@ namespace enbt {
 
     class bit {
         value holder = value(false);
+        friend class value;
 
     public:
         bit() = default;
@@ -3373,18 +3341,6 @@ namespace enbt {
             return holder;
         }
 
-        [[nodiscard]] explicit operator value&() & {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator const value&() const& {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator value&&() && {
-            return std::move(holder);
-        }
-
         std::strong_ordering operator<=>(const bit& enbt) const {
             return holder == enbt.holder ? std::strong_ordering::equal : std::strong_ordering::less;
         }
@@ -3392,6 +3348,8 @@ namespace enbt {
 
     class optional {
         value holder = value((value*)nullptr, enbt::type_id(enbt::type::optional, enbt::type_len::Tiny, false), 0, false);
+
+        friend class value;
 
     public:
         optional() = default;
@@ -3496,18 +3454,6 @@ namespace enbt {
             return *this;
         }
 
-        [[nodiscard]] explicit operator value&() & {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator const value&() const& {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator value&&() && {
-            return std::move(holder);
-        }
-
         std::strong_ordering operator<=>(const optional& enbt) const {
             return holder == enbt.holder ? std::strong_ordering::equal : std::strong_ordering::less;
         }
@@ -3515,6 +3461,8 @@ namespace enbt {
 
     class uuid {
         value holder = value(enbt::raw_uuid());
+
+        friend class value;
 
     public:
         uuid() = default;
@@ -3569,18 +3517,6 @@ namespace enbt {
 
         operator enbt::raw_uuid() const {
             return std::get<enbt::raw_uuid>(holder.content());
-        }
-
-        [[nodiscard]] explicit operator value&() & {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator const value&() const& {
-            return holder;
-        }
-
-        [[nodiscard]] explicit operator value&&() && {
-            return std::move(holder);
         }
 
         std::strong_ordering operator<=>(const uuid& enbt) const {

@@ -3,6 +3,7 @@
 #include "enbt.hpp"
 #include <functional>
 #include <istream>
+#include <sstream>
 #include <type_traits>
 #include <unordered_set>
 
@@ -231,7 +232,6 @@ namespace enbt {
                         value_read_stream stream(read_stream, *res);
                         callback(stream);
                         read_stream.seekg(old_pos);
-                        readed = false;
                     } catch (...) {
                         read_stream.seekg(old_pos);
                         throw;
@@ -252,8 +252,6 @@ namespace enbt {
                 peek_stream& peek_at(const std::string& chr, FN&& callback, FN_nf&& not_found_callback)
                     requires(std::is_invocable_v<FN, value_read_stream&> && std::is_invocable_v<FN_nf>)
                 {
-                    if (readed)
-                        throw enbt::exception("Invalid read state, item has been already readed");
                     auto old_pos = read_stream.tellg();
                     try {
                         if (find_value_compound(read_stream, current_type_id, chr)) {

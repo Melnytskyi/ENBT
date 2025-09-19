@@ -598,88 +598,88 @@ namespace enbt {
     }
 
     value::value(const compound& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(compound&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const fixed_array& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(fixed_array&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const dynamic_array& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(dynamic_array&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_ui8& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_ui8&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_ui16& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_ui16&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_ui32& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_ui32&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_ui64& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_ui64&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_i8& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_i8&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_i16& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_i16&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_i32& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_i32&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const simple_array_i64& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(simple_array_i64&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const bit& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(bit&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const optional& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(optional&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
     value::value(const uuid& copy)
-        : value((const value&)copy) {}
+        : value(copy.holder) {}
 
     value::value(uuid&& copy) noexcept
-        : value((value&&)std::move(copy)) {}
+        : value(std::move(copy.holder)) {}
 
 #pragma endregion
 
@@ -1013,7 +1013,7 @@ namespace enbt {
         return std::visit(
             [](auto& it) -> Target {
                 using T = std::decay_t<decltype(it)>;
-                if constexpr (std::is_same_v<T, nullptr_t>)
+                if constexpr (std::is_same_v<T, std::nullptr_t>)
                     return Target(0);
                 else if constexpr (std::is_same_v<T, bool>)
                     return Target(it);
@@ -1419,7 +1419,7 @@ namespace enbt {
                     return {"", value(*(std::int64_t*)pointer)};
                     break;
                 default:
-                    std::unreachable();
+                    throw enbt::exception();
                 }
             } else {
                 switch (iterate_type.length) {
@@ -1436,7 +1436,7 @@ namespace enbt {
                     return {"", value(*(std::uint64_t*)pointer)};
                     break;
                 default:
-                    std::unreachable();
+                    throw enbt::exception();
                 }
             }
         case type::array:
@@ -1481,6 +1481,16 @@ namespace enbt {
 
     compound compound::merge(value&& copy) && {
         merge_compounds(*proxy, std::move(*copy.as_compound().proxy));
+        return std::move(*this);
+    }
+
+    compound compound::merge(const compound& copy) && {
+        merge_compounds(*proxy, *copy.proxy);
+        return std::move(*this);
+    }
+
+    compound compound::merge(compound&& copy) && {
+        merge_compounds(*proxy, std::move(*copy.proxy));
         return std::move(*this);
     }
 
