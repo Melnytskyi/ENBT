@@ -1280,7 +1280,12 @@ namespace enbt {
     }
 
     value::operator raw_uuid() const {
-        return std::get<raw_uuid>(content());
+        if (is_string()) {
+            raw_uuid res;
+            raw_uuid::from_uuid_string(res, (const std::string&)*this);
+            return res;
+        } else
+            return std::get<raw_uuid>(content());
     }
 
     value::operator std::optional<value>() const {
@@ -4435,7 +4440,140 @@ namespace senbt {
         return res;
     }
 
-    void serialize(std::string& res, const enbt::value& value, std::string& spaces, bool compress, bool type_erasure) {
+    void serialize(std::string& res, std::string& spaces, const enbt::value& value, bool compress, bool type_erasure);
+
+    void serialize(std::string& res, std::string& spaces, const enbt::compound_const_ref& compound, bool compress, bool type_erasure) {
+        if (compound.size()) {
+            if (!compress)
+                spaces.push_back('\t');
+            res += "{";
+            for (auto&& [name, val] : compound) {
+                if (!compress)
+                    res += '\n';
+                res += spaces + '"' + de_format(name) + "\": ";
+                serialize(res, spaces, val, compress, type_erasure);
+                res += ',';
+            }
+            res.pop_back();
+            if (!compress) {
+                spaces.pop_back();
+                res += '\n';
+            }
+
+            res += spaces + "}";
+        } else
+            res += "{}";
+    }
+
+    void serialize(std::string& res, std::string& spaces, const enbt::fixed_array_ref& arr, bool compress, bool type_erasure) {
+        if (!compress)
+            spaces.push_back('\t');
+        if (type_erasure)
+            res += "[";
+        else
+            res += "a[";
+        for (auto&& val : arr) {
+            if (!compress)
+                res += '\n';
+            res += spaces;
+            serialize(res, spaces, val, compress, type_erasure);
+            res += ',';
+        }
+        if (!compress)
+            spaces.pop_back();
+
+        if (arr.size()) {
+            res.pop_back();
+            if (!compress)
+                res += '\n';
+            res += spaces + "]";
+        } else
+            res += ']';
+    }
+
+    void serialize(std::string& res, std::string& spaces, const enbt::dynamic_array_ref& arr, bool compress, bool type_erasure) {
+        if (!compress)
+            spaces.push_back('\t');
+        res += "[";
+        for (auto&& val : arr) {
+            if (!compress)
+                res += '\n';
+            res += spaces;
+            serialize(res, spaces, val, compress, type_erasure);
+            res += ',';
+        }
+        if (!compress)
+            spaces.pop_back();
+
+        if (arr.size()) {
+            res.pop_back();
+            if (!compress)
+                res += '\n';
+            res += spaces + "]";
+        } else
+            res += "]";
+    }
+
+    template <class Sarr>
+    void serialize_sarr(std::string& res, std::string& spaces, const Sarr& data, bool compress, bool type_erasure) {
+        using T = typename Sarr::value_type;
+        if (!type_erasure) {
+            res += "s";
+            if constexpr (std::is_unsigned_v<T>)
+                res += 'u';
+            if constexpr (sizeof(T) == 1)
+                res += "b";
+            else if constexpr (sizeof(T) == 2)
+                res += "s";
+            else if constexpr (sizeof(T) == 4)
+                res += "i";
+            else
+                res += "l";
+        }
+        if (!compress)
+            res += '\n';
+        for (std::size_t i = 0; i < data.size(); i++) {
+            res += spaces + std::to_string(data[i]);
+            if (i != data.size() - 1)
+                res += ',';
+            if (!compress)
+                res += '\n';
+        }
+        res += "]";
+    }
+
+    void serialize(std::string& res, std::string& spaces, const enbt::bit& value, bool compress, bool type_erasure) {
+        res += value ? "true" : "false";
+    }
+
+    void serialize(std::string& res, std::string& spaces, const enbt::optional& value, bool compress, bool type_erasure) {
+        if (!compress) {
+            if (value.has_value()) {
+                spaces.push_back('\t');
+                res += "?(\n" + spaces;
+                serialize(res, spaces, *value, compress, type_erasure);
+                spaces.pop_back();
+                res += '\n' + spaces + ")";
+            } else
+                res += "?()";
+        } else {
+            if (value.has_value()) {
+                res += "?(";
+                serialize(res, spaces, *value, compress, type_erasure);
+                res += ")";
+            } else
+                res += "?()";
+        }
+    }
+
+    void serialize(std::string& res, std::string& spaces, const enbt::uuid& value, bool compress, bool type_erasure) {
+        res += type_erasure ? "\"" : "uuid\"";
+        enbt::raw_uuid tmp = value;
+        res += tmp.to_string();
+        res += '"';
+    }
+
+    void serialize(std::string& res, std::string& spaces, const enbt::value& value, bool compress, bool type_erasure) {
         switch (value.get_type()) {
         case enbt::type::none:
             res += "null";
@@ -4512,29 +4650,31 @@ namespace senbt {
             }
             break;
         case enbt::type::uuid: {
-            res += "uuid\"";
+            res += type_erasure ? "\"" : "uuid\"";
             enbt::raw_uuid tmp = value;
             res += tmp.to_string();
             res += '"';
             break;
         }
         case enbt::type::sarray: {
-            res += "s";
-            if (!value.get_type_sign())
-                res += 'u';
-            switch (value.get_type_len()) {
-            case enbt::type_len::Tiny:
-                res += "b";
-                break;
-            case enbt::type_len::Short:
+            if (!type_erasure) {
                 res += "s";
-                break;
-            case enbt::type_len::Default:
-                res += "i";
-                break;
-            case enbt::type_len::Long:
-                res += "l";
-                break;
+                if (!value.get_type_sign())
+                    res += 'u';
+                switch (value.get_type_len()) {
+                case enbt::type_len::Tiny:
+                    res += "b";
+                    break;
+                case enbt::type_len::Short:
+                    res += "s";
+                    break;
+                case enbt::type_len::Default:
+                    res += "i";
+                    break;
+                case enbt::type_len::Long:
+                    res += "l";
+                    break;
+                }
             }
             if (value.size()) {
                 res += "[\n";
@@ -4646,88 +4786,22 @@ namespace senbt {
                 res += "[]";
             break;
         }
-        case enbt::type::compound: {
-            auto compound = value.as_compound();
-            if (compound.size()) {
-                if (!compress)
-                    spaces.push_back('\t');
-                res += "{";
-                for (auto&& [name, val] : compound) {
-                    if (!compress)
-                        res += '\n';
-                    res += spaces + '"' + de_format(name) + "\": ";
-                    serialize(res, val, spaces, compress, type_erasure);
-                    res += ',';
-                }
-                res.pop_back();
-                if (!compress) {
-                    spaces.pop_back();
-                    res += '\n';
-                }
-
-                res += spaces + "}";
-            } else
-                res += "{}";
+        case enbt::type::compound:
+            serialize(res, spaces, value.as_compound(), compress, type_erasure);
             break;
-        }
-        case enbt::type::darray: {
-            auto arr = enbt::dynamic_array::make_ref(value);
-            if (!compress)
-                spaces.push_back('\t');
-            res += "[";
-            for (auto&& val : arr) {
-                if (!compress)
-                    res += '\n';
-                res += spaces;
-                serialize(res, val, spaces, compress, type_erasure);
-                res += ',';
-            }
-            if (!compress)
-                spaces.pop_back();
-
-            if (arr.size()) {
-                res.pop_back();
-                if (!compress)
-                    res += '\n';
-                res += spaces + "]";
-            } else
-                res += "]";
+        case enbt::type::darray:
+            serialize(res, spaces, value.as_dyn_array(), compress, type_erasure);
             break;
-        }
-        case enbt::type::array: {
-            auto arr = enbt::dynamic_array::make_ref(value);
-            if (!compress)
-                spaces.push_back('\t');
-            if (type_erasure)
-                res += "[";
-            else
-                res += "a[";
-            for (auto&& val : arr) {
-                if (!compress)
-                    res += '\n';
-                res += spaces;
-                serialize(res, val, spaces, compress, type_erasure);
-                res += ',';
-            }
-            if (!compress)
-                spaces.pop_back();
-
-            if (arr.size()) {
-                res.pop_back();
-                if (!compress)
-                    res += '\n';
-                res += spaces + "]";
-            } else
-                res += ']';
+        case enbt::type::array:
+            serialize(res, spaces, value.as_fixed_array(), compress, type_erasure);
             break;
-        }
         case enbt::type::optional: {
             auto val = value.get_optional();
             if (!compress) {
                 if (val) {
                     spaces.push_back('\t');
                     res += "?(\n" + spaces;
-                    serialize(res, *val, spaces, compress, type_erasure);
+                    serialize(res, spaces, *val, compress, type_erasure);
                     spaces.pop_back();
                     res += '\n' + spaces + ")";
                 } else
@@ -4735,7 +4809,7 @@ namespace senbt {
             } else {
                 if (val) {
                     res += "?(";
-                    serialize(res, *val, spaces, compress, type_erasure);
+                    serialize(res, spaces, *val, compress, type_erasure);
                     res += ")";
                 } else
                     res += "?()";
@@ -4752,12 +4826,12 @@ namespace senbt {
             if (!compress) {
                 spaces.push_back('\t');
                 res += "(\n" + spaces;
-                serialize(res, value.get_log_value(), spaces, compress, type_erasure);
+                serialize(res, spaces, value.get_log_value(), compress, type_erasure);
                 spaces.pop_back();
                 res += '\n' + spaces + ")";
             } else {
                 res += "(";
-                serialize(res, value.get_log_value(), spaces, compress, type_erasure);
+                serialize(res, spaces, value.get_log_value(), compress, type_erasure);
                 res += ")";
             }
             break;
@@ -4767,7 +4841,168 @@ namespace senbt {
     std::string serialize(const enbt::value& value, bool compress, bool type_erasure) {
         std::string res;
         std::string spaces;
-        serialize(res, value, spaces, compress, type_erasure);
+        serialize(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::compound_ref& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::compound_const_ref& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::fixed_array_ref& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::dynamic_array_ref& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_ui8& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_ui16& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_ui32& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_ui64& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_i8& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_i16& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_i32& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_const_ref_i64& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_ui8& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_ui16& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_ui32& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_ui64& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_i8& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_i16& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_i32& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::simple_array_ref_i64& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize_sarr(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::bit& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::optional& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, spaces, value, compress, type_erasure);
+        return res;
+    }
+
+    std::string serialize(const enbt::uuid& value, bool compress, bool type_erasure) {
+        std::string res;
+        std::string spaces;
+        serialize(res, spaces, value, compress, type_erasure);
         return res;
     }
 }

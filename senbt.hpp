@@ -27,6 +27,29 @@ namespace senbt {
 
     //set compressed to true if string is will be sent via network(skips formatting)
     std::string serialize(const enbt::value& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::compound_ref& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::compound_const_ref& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::fixed_array_ref& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::dynamic_array_ref& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_ui8& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_ui16& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_ui32& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_ui64& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_i8& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_i16& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_i32& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_const_ref_i64& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_ui8& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_ui16& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_ui32& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_ui64& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_i8& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_i16& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_i32& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::simple_array_ref_i64& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::bit& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::optional& value, bool compressed = false, bool type_erasure = false);
+    std::string serialize(const enbt::uuid& value, bool compressed = false, bool type_erasure = false);
 }
 
 
