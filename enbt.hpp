@@ -2660,16 +2660,17 @@ namespace enbt {
                 throw enbt::exception("value is not a simple array or not same");
         }
 
-        using pointer = value*;
-        using const_pointer = const value*;
-        using reference = value&;
-        using const_reference = const value&;
+        using value_type = T;
+        using pointer = T*;
+        using const_pointer = const T*;
+        using reference = T&;
+        using const_reference = const T&;
         using size_type = std::size_t;
         using difference_type = ptrdiff_t;
-        using iterator = value*;
-        using const_iterator = const value*;
-        using reverse_iterator = std::vector<value>::reverse_iterator;
-        using const_reverse_iterator = std::vector<value>::const_reverse_iterator;
+        using iterator = T*;
+        using const_iterator = const T*;
+        using reverse_iterator = T*;
+        using const_reverse_iterator = const T*;
 
         simple_array_const_ref(const simple_array_const_ref& tag) {
             proxy = tag.proxy;
@@ -2793,16 +2794,17 @@ namespace enbt {
             return simple_array_const_ref<T>::make_ref(enbt);
         }
 
-        using pointer = value*;
-        using const_pointer = const value*;
-        using reference = value&;
-        using const_reference = const value&;
+        using value_type = T;
+        using pointer = T*;
+        using const_pointer = const T*;
+        using reference = T&;
+        using const_reference = const T&;
         using size_type = std::size_t;
         using difference_type = ptrdiff_t;
-        using iterator = value*;
-        using const_iterator = const value*;
-        using reverse_iterator = std::vector<value>::reverse_iterator;
-        using const_reverse_iterator = std::vector<value>::const_reverse_iterator;
+        using iterator = T*;
+        using const_iterator = const T*;
+        using reverse_iterator = T*;
+        using const_reverse_iterator = const T*;
 
         simple_array_ref(const simple_array_ref& tag) {
             proxy = tag.proxy;
