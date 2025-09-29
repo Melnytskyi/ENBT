@@ -3793,86 +3793,86 @@ namespace enbt {
 
         void value_write_stream::write(bool res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::bit, res});
+                write_type_id(write_stream, type_id{type::bit, res});
             else
                 throw std::invalid_argument("The bool value is encoded in type and could't save it without type");
         }
 
         void value_write_stream::write(uint8_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Tiny, false});
+                write_type_id(write_stream, type_id{type::integer, type_len::Tiny, false});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(uint16_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Short, false});
+                write_type_id(write_stream, type_id{type::integer, type_len::Short, false});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(uint32_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Default, false});
+                write_type_id(write_stream, type_id{type::integer, type_len::Default, false});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(uint64_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Long, false});
+                write_type_id(write_stream, type_id{type::integer, type_len::Long, false});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(int8_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Tiny, true});
+                write_type_id(write_stream, type_id{type::integer, type_len::Tiny, true});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(int16_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Short, true});
+                write_type_id(write_stream, type_id{type::integer, type_len::Short, true});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(int32_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Default, true});
+                write_type_id(write_stream, type_id{type::integer, type_len::Default, true});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(int64_t res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::integer, type_len::Long, true});
+                write_type_id(write_stream, type_id{type::integer, type_len::Long, true});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(float res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::floating, type_len::Default, true});
+                write_type_id(write_stream, type_id{type::floating, type_len::Default, true});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(double res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::floating, type_len::Long, true});
+                write_type_id(write_stream, type_id{type::floating, type_len::Long, true});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(enbt::raw_uuid res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::uuid});
+                write_type_id(write_stream, type_id{type::uuid});
             write_value(write_stream, res);
         }
 
         void value_write_stream::write(const std::string& res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::string});
+                write_type_id(write_stream, type_id{type::string});
             write_string(write_stream, res);
         }
 
         void value_write_stream::write(std::string_view res) {
             if (need_to_write_type_id)
-                write_token(write_stream, type_id{type::string});
+                write_type_id(write_stream, type_id{type::string});
             write_string(write_stream, res);
         }
 
